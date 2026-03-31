@@ -1,30 +1,201 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
-
-const tasks = [
-  { id: 1, title: 'Create a functional component', difficulty: 'Easy', done: true },
-  { id: 2, title: 'Use useState to manage a counter', difficulty: 'Easy', done: true },
-  { id: 3, title: 'Pass props between components', difficulty: 'Medium', done: false },
-  { id: 4, title: 'Implement useEffect for data fetching', difficulty: 'Medium', done: false },
-]
+import { apiRequest } from '../utils/api'
 
 export default function VideoTask() {
   const navigate = useNavigate()
-  const [answer, setAnswer] = useState('')
-  const [submitted, setSubmitted] = useState(false)
-  const [tasksDone, setTasksDone] = useState(tasks)
+  const [params] = useSearchParams()
+  const languageParam = params.get('language')
+  const preferredVideoId = params.get('videoId')
+  const refreshTasksKey = params.get('refreshTasks')
+
+  const [journeyLoading, setJourneyLoading] = useState(false)
+  const [journeyError, setJourneyError] = useState('')
+  const [playlistId, setPlaylistId] = useState(null)
+  const [language, setLanguage] = useState(null)
+  const [videos, setVideos] = useState([])
+  const [activeVideoId, setActiveVideoId] = useState(null)
+
+  const [tasksLoading, setTasksLoading] = useState(false)
+  const [tasksError, setTasksError] = useState('')
+  const [tasks, setTasks] = useState([])
+  const [activeTaskId, setActiveTaskId] = useState(null)
   const [videoHover, setVideoHover] = useState(false)
 
-  const handleSubmit = () => {
-    if (answer.trim()) setSubmitted(true)
+  const activeVideo = useMemo(
+    () => videos.find((v) => String(v.id) === String(activeVideoId)) || null,
+    [videos, activeVideoId],
+  )
+
+  useEffect(() => {
+    const load = async () => {
+      const fromStorage = (() => {
+        try {
+          const raw = localStorage.getItem('dm-onboarding')
+          const parsed = raw ? JSON.parse(raw) : null
+          return parsed?.currentLanguage || parsed?.recommendedNextLanguage || null
+        } catch {
+          return null
+        }
+      })()
+      const langRaw = languageParam || fromStorage
+      if (!langRaw) return
+      const normalize = (v) => {
+        if (v === 'Node.js') return 'Node'
+        if (v === 'Express.js') return 'Express'
+        return v
+      }
+      const lang = normalize(String(langRaw).trim())
+
+      setJourneyLoading(true)
+      setJourneyError('')
+      try {
+        const res = await apiRequest(`/videos/${encodeURIComponent(lang)}`)
+        setLanguage(lang)
+        setPlaylistId(res.playlistId || null)
+        setVideos(res.videos)
+
+        if (res.videos.length > 0) {
+          const unlocked = res.videos.filter((v) => v.unlocked && !v.completed)
+          const firstUnlocked = unlocked[0] || res.videos.find((v) => v.unlocked) || res.videos[0]
+          const pick = preferredVideoId
+            ? res.videos.find((v) => String(v.id) === String(preferredVideoId)) || firstUnlocked
+            : firstUnlocked
+          setActiveVideoId(pick?.id != null ? String(pick.id) : null)
+        } else {
+          setActiveVideoId(null)
+        }
+      } catch (e) {
+        setJourneyError(e.message)
+      } finally {
+        setJourneyLoading(false)
+      }
+    }
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [languageParam])
+
+  useEffect(() => {
+    const loadTasks = async () => {
+      if (!activeVideoId) return
+      setTasksLoading(true)
+      setTasksError('')
+      try {
+        // Generate tasks (AI optional) using the current video title.
+        // Even if AI fails, backend seeds fallback tasks so UI never stays empty.
+        // eslint-disable-next-line no-console
+        console.log('Video Title:', activeVideo?.title)
+        await apiRequest('/generate-tasks', {
+          method: 'POST',
+          body: JSON.stringify({
+            videoId: activeVideoId,
+            videoTitle: activeVideo?.title || '',
+          }),
+        })
+
+        const res = await apiRequest(`/tasks/${activeVideoId}`)
+        setTasks(res.tasks || [])
+      } catch (e) {
+        setTasksError(e.message)
+        setTasks([])
+      } finally {
+        setTasksLoading(false)
+      }
+    }
+
+    loadTasks()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeVideoId, refreshTasksKey, activeVideo?.title])
+
+  const orderedTasks = useMemo(() => {
+    return [...tasks].sort((a, b) => (a.order || 0) - (b.order || 0))
+  }, [tasks])
+
+  const completed = orderedTasks.filter((t) => t.completed).length
+  const allTasksDone = orderedTasks.length > 0 && orderedTasks.every((t) => t.completed)
+  const firstIncompleteIndex = orderedTasks.findIndex((t) => !t.completed)
+
+  const isTaskUnlocked = (idx, task) => {
+    if (!task) return false
+    if (task.completed) return true
+    if (firstIncompleteIndex === -1) return true
+    return idx === firstIncompleteIndex
   }
 
-  const toggleTask = (i) => {
-    setTasksDone(prev => prev.map((t, idx) => idx === i ? { ...t, done: !t.done } : t))
-  }
+  const activeTask = useMemo(() => {
+    return orderedTasks.find((t) => String(t.id) === String(activeTaskId)) || null
+  }, [orderedTasks, activeTaskId])
 
-  const completed = tasksDone.filter(t => t.done).length
+  const activeTaskIndex = useMemo(() => {
+    if (!activeTaskId) return -1
+    return orderedTasks.findIndex((t) => String(t.id) === String(activeTaskId))
+  }, [orderedTasks, activeTaskId])
+
+  const activeTaskUnlocked = activeTask ? isTaskUnlocked(activeTaskIndex, activeTask) : false
+
+  useEffect(() => {
+    // Keep the active task valid after refetch.
+    if (!activeTaskId) {
+      const next = orderedTasks.find((t) => !t.completed) || orderedTasks[0] || null
+      setActiveTaskId(next?.id ? String(next.id) : null)
+      return
+    }
+
+    const stillExists = orderedTasks.some((t) => String(t.id) === String(activeTaskId))
+    if (!stillExists) {
+      const next = orderedTasks.find((t) => !t.completed) || orderedTasks[0] || null
+      setActiveTaskId(next?.id ? String(next.id) : null)
+      return
+    }
+
+    const current = orderedTasks.find((t) => String(t.id) === String(activeTaskId))
+    if (current?.completed) {
+      const next = orderedTasks.find((t) => !t.completed) || current
+      setActiveTaskId(next?.id ? String(next.id) : null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderedTasks])
+
+  const markVideoComplete = async () => {
+    if (!playlistId || !activeVideoId) return
+    setJourneyLoading(true)
+    setJourneyError('')
+    try {
+      const res = await apiRequest('/videos/complete', {
+        method: 'POST',
+        body: JSON.stringify({ videoId: activeVideoId }),
+      })
+
+      if (Array.isArray(res.videos)) {
+        setVideos(res.videos)
+      }
+      if (res.playlistId) {
+        setPlaylistId(res.playlistId)
+      }
+      if (res.language) {
+        setLanguage(res.language)
+      }
+
+      if (res.languageCompleted && res.nextLanguage) {
+        navigate(`/journey/playlist?language=${encodeURIComponent(res.nextLanguage)}`)
+        return
+      }
+
+      if (res.nextUnlockedVideoId) {
+        setActiveVideoId(String(res.nextUnlockedVideoId))
+      } else {
+        const nextWatch = res.videos?.find((v) => v.unlocked && !v.completed)
+        if (nextWatch) {
+          setActiveVideoId(String(nextWatch.id))
+        }
+      }
+    } catch (e) {
+      setJourneyError(e.message)
+    } finally {
+      setJourneyLoading(false)
+    }
+  }
 
   return (
     <div className="page-layout">
@@ -37,8 +208,12 @@ export default function VideoTask() {
           background: '#fff', animation: 'fadeUp 0.25s ease both'
         }}>
           <div>
-            <span className="badge badge-cyan" style={{ marginBottom: 6 }}>React Basics · Level 4</span>
-            <h1 style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>React Hooks Deep Dive</h1>
+            <span className="badge badge-cyan" style={{ marginBottom: 6 }}>
+              {language || activeVideo?.language || 'Journey'} · Video tasks
+            </span>
+            <h1 style={{ fontSize: 18, fontWeight: 700, marginTop: 4 }}>
+              {activeVideo?.title || 'Video'}
+            </h1>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn-secondary" style={{ padding: '7px 16px', fontSize: 13 }}>← Previous</button>
@@ -47,6 +222,12 @@ export default function VideoTask() {
             </button>
           </div>
         </div>
+
+        {journeyError && (
+          <div style={{ padding: 14, background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#b91c1c' }}>
+            {journeyError}
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', height: 'calc(100vh - 73px)' }}>
           {/* Left */}
@@ -62,107 +243,209 @@ export default function VideoTask() {
                 cursor: 'pointer', transition: 'background 0.2s',
                 borderBottom: '1px solid #e8e8e4', position: 'relative', overflow: 'hidden'
               }}>
-              <div style={{
-                width: 52, height: 52, borderRadius: '50%', background: '#fff',
-                border: '1px solid #e8e8e4', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', fontSize: 18,
-                transform: videoHover ? 'scale(1.1)' : 'scale(1)',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-                boxShadow: videoHover ? '0 4px 16px rgba(0,0,0,0.12)' : 'none'
-              }}>▶</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>React Hooks - Complete Guide</div>
-              <div style={{ fontSize: 12, color: 'var(--text3)' }}>YouTube · 24:35</div>
+              {activeVideo?.youtubeVideoId ? (
+                <iframe
+                  title={activeVideo.title || 'YouTube video'}
+                  src={`https://www.youtube.com/embed/${activeVideo.youtubeVideoId}`}
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              ) : (
+                <div style={{ fontSize: 14, color: 'var(--text3)' }}>No video selected.</div>
+              )}
             </div>
 
-            {/* Answer box */}
+            {/* Task box */}
             <div style={{ flex: 1, padding: 24, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Your Answer / Code</div>
-              <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 12, lineHeight: 1.6 }}>
-                Task: <strong style={{ color: 'var(--accent)' }}>Pass props between two components and display the data.</strong>
-              </p>
-              <textarea
-                value={answer}
-                onChange={e => setAnswer(e.target.value)}
-                placeholder="Write your answer or paste your code here..."
-                className="input-field"
-                style={{
-                  flex: 1, minHeight: 120, padding: 12, borderRadius: 8,
-                  background: 'var(--bg)', border: '1px solid #e8e8e4',
-                  color: 'var(--text)', fontSize: 13, resize: 'none',
-                  fontFamily: 'ui-monospace, Consolas, monospace', lineHeight: 1.6
-                }}
-              />
-              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-                <button className="btn-green" onClick={handleSubmit}>Submit Task</button>
-                <button className="btn-secondary" style={{ padding: '9px 16px', fontSize: 13 }} onClick={() => navigate('/code-editor')}>
-                  Open Editor
-                </button>
-                <button className="btn-primary" style={{ padding: '9px 16px', fontSize: 13, marginLeft: 'auto' }}>
-                  Mark Complete
-                </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Tasks for this video</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>{completed}/{orderedTasks.length} completed</div>
               </div>
 
-              {/* Feedback */}
-              <div style={{
-                marginTop: 14, padding: 14, borderRadius: 8,
-                background: '#f0fdf4', border: '1px solid #bbf7d0',
-                overflow: 'hidden', maxHeight: submitted ? 120 : 0,
-                opacity: submitted ? 1 : 0,
-                transition: 'max-height 0.35s ease, opacity 0.3s ease, margin 0.3s ease',
-                marginTop: submitted ? 14 : 0,
-              }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#15803d', marginBottom: 5 }}>AI Feedback</div>
-                <p style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>
-                  Good attempt! Your understanding of props is solid. Consider destructuring props for cleaner code —{' '}
-                  <code style={{ background: 'var(--border)', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>{'const { name } = props'}</code>
-                </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+                {tasksLoading && orderedTasks.length === 0 && (
+                  <div className="card" style={{ padding: 12 }}>
+                    Loading tasks...
+                  </div>
+                )}
+                {tasksError && (
+                  <div style={{ padding: 12, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 10 }}>
+                    {tasksError}
+                  </div>
+                )}
+                {orderedTasks.map((t, idx) => (
+                  <div
+                    key={t.id}
+                    onClick={() => {
+                      if (!activeVideo?.unlocked) return
+                      const unlocked = isTaskUnlocked(idx, t)
+                      if (!unlocked) return
+                      setActiveTaskId(String(t.id))
+                    }}
+                    style={{
+                      padding: '11px 13px',
+                      borderRadius: 10,
+                      cursor: activeVideo?.unlocked && isTaskUnlocked(idx, t) ? 'pointer' : 'not-allowed',
+                      background: t.completed ? '#f0fdf4' : isTaskUnlocked(idx, t) ? 'var(--card)' : 'var(--bg3)',
+                      border: `1px solid ${
+                        t.completed ? '#bbf7d0' : isTaskUnlocked(idx, t) ? 'var(--border)' : 'var(--border2)'
+                      }`,
+                      opacity: !activeVideo?.unlocked ? 0.5 : 1,
+                      pointerEvents: !activeVideo?.unlocked ? 'none' : 'auto',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{
+                        width: 18, height: 18, borderRadius: 4,
+                        background: t.completed ? 'var(--green)' : '#fff',
+                        border: `1.5px solid ${t.completed ? 'var(--green)' : 'var(--border2)'}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 10, color: '#fff',
+                      }}>{t.completed ? '✓' : ''}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{t.title}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text2)' }}>{t.description}</div>
+                      </div>
+                      {!t.completed && !isTaskUnlocked(idx, t) && (
+                        <span className="badge badge-orange" style={{ fontSize: 10, marginLeft: 'auto' }}>Locked</span>
+                      )}
+                      {!t.completed && isTaskUnlocked(idx, t) && (
+                        <span className="badge badge-cyan" style={{ fontSize: 10, marginLeft: 'auto' }}>Unlocked</span>
+                      )}
+                      <span className={`badge ${
+                        t.difficulty === 'easy' ? 'badge-green'
+                          : t.difficulty === 'hard' ? 'badge-orange'
+                            : 'badge-cyan'
+                      }`} style={{ fontSize: 11 }}>
+                        {t.difficulty}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                <button
+                  className="btn-secondary"
+                  style={{ padding: '9px 16px', fontSize: 13 }}
+                  disabled={
+                    !activeVideo?.unlocked ||
+                    !activeTask ||
+                    !activeTaskUnlocked ||
+                    activeTask.completed ||
+                    journeyLoading ||
+                    tasksLoading
+                  }
+                  title={
+                    !activeVideo?.unlocked
+                      ? 'Video is locked'
+                      : !activeTask
+                        ? 'Select an unlocked task'
+                        : !activeTaskUnlocked
+                          ? 'Complete the previous task first.'
+                          : activeTask.completed
+                            ? 'Task already completed'
+                            : ''
+                  }
+                  onClick={() => {
+                    if (!activeTask || !activeVideo?.unlocked) return
+                    if (!activeTaskUnlocked) return
+                    const problem = `${activeTask.title}\n${activeTask.description || ''}\nExpected output:\n${activeTask.expectedOutput || ''}`.trim()
+                    localStorage.setItem(
+                      'dm-code-eval-context',
+                      JSON.stringify({
+                        taskId: activeTask.id,
+                        videoId: activeVideoId,
+                        language: language || activeVideo?.language,
+                        problemDescription: problem,
+                        starterCode: activeTask.starterCode || '',
+                      }),
+                    )
+                    navigate(
+                      `/code-editor?taskId=${encodeURIComponent(String(activeTask.id))}&videoId=${encodeURIComponent(
+                        String(activeVideoId || ''),
+                      )}&language=${encodeURIComponent(language || activeVideo?.language || '')}`,
+                    )
+                  }}
+                >
+                  Open Editor
+                </button>
+                <button
+                  className="btn-primary"
+                  style={{ padding: '9px 16px', fontSize: 13, marginLeft: 'auto', opacity: journeyLoading ? 0.8 : 1 }}
+                  onClick={markVideoComplete}
+                  disabled={journeyLoading || !activeVideo?.unlocked}
+                  title={!activeVideo?.unlocked ? 'This video is locked. Complete the previous video first.' : ''}
+                >
+                  {journeyLoading ? 'Saving...' : 'Mark video complete'}
+                </button>
               </div>
             </div>
           </div>
 
           {/* Right: Tasks panel */}
           <div style={{ padding: 20, overflowY: 'auto', background: 'var(--bg)', animation: 'fadeUp 0.35s ease both' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>AI-Generated Tasks</div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
-              {tasksDone.map((task, i) => (
-                <div
-                  key={task.id}
-                  onClick={() => toggleTask(i)}
-                  style={{
-                    padding: '11px 13px', borderRadius: 8, cursor: 'pointer',
-                    background: task.done ? '#f0fdf4' : '#fff',
-                    border: `1px solid ${task.done ? '#bbf7d0' : 'var(--border)'}`,
-                    transition: 'background 0.2s, border-color 0.2s, transform 0.15s',
-                    transform: 'scale(1)',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.transform = 'scale(1.01)'}
-                  onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
-                  onMouseDown={e => e.currentTarget.style.transform = 'scale(0.98)'}
-                  onMouseUp={e => e.currentTarget.style.transform = 'scale(1.01)'}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{
-                      width: 18, height: 18, borderRadius: 4, flexShrink: 0,
-                      background: task.done ? 'var(--green)' : '#fff',
-                      border: `1.5px solid ${task.done ? 'var(--green)' : 'var(--border2)'}`,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 10, color: '#fff',
-                      transition: 'background 0.2s, border-color 0.2s'
-                    }}>{task.done ? '✓' : ''}</div>
-                    <span style={{
-                      fontSize: 13, fontWeight: 500,
-                      textDecoration: task.done ? 'line-through' : 'none',
-                      color: task.done ? 'var(--text3)' : 'var(--text)',
-                      transition: 'color 0.2s'
-                    }}>{task.title}</span>
-                    <span className={`badge ${task.difficulty === 'Easy' ? 'badge-green' : 'badge-orange'}`} style={{ fontSize: 10, marginLeft: 'auto' }}>
-                      {task.difficulty}
-                    </span>
-                  </div>
-                </div>
-              ))}
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
+              {playlistId ? 'Playlist videos' : 'AI-Generated Tasks'}
             </div>
+
+            {playlistId && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
+                {journeyLoading && videos.length === 0 && (
+                  <div className="card">Loading videos...</div>
+                )}
+                {videos.map((v) => (
+                  <div
+                    key={v.id}
+                    onClick={() => v.unlocked && setActiveVideoId(String(v.id))}
+                    style={{
+                      padding: '11px 13px',
+                      borderRadius: 8,
+                      cursor: v.unlocked ? 'pointer' : 'not-allowed',
+                      background: v.completed ? '#f0fdf4' : v.unlocked ? '#fff' : 'var(--bg3)',
+                      border: `1px solid ${v.completed ? '#bbf7d0' : v.unlocked ? 'var(--border)' : 'var(--border2)'}`,
+                      opacity: v.unlocked ? 1 : 0.55,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{
+                        width: 18, height: 18, borderRadius: 4, flexShrink: 0,
+                        background: v.completed ? 'var(--green)' : v.unlocked ? '#fff' : 'var(--border)',
+                        border: `1.5px solid ${v.completed ? 'var(--green)' : v.unlocked ? 'var(--border2)' : 'var(--border2)'}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 10, color: '#fff',
+                      }}>{v.completed ? '✓' : ''}</div>
+                      <span style={{
+                        fontSize: 13,
+                        fontWeight: 500,
+                        color: v.completed ? 'var(--text3)' : 'var(--text)',
+                        textDecoration: v.completed ? 'line-through' : 'none',
+                      }}>
+                        {v.order + 1}. {v.title}
+                      </span>
+                      {!v.unlocked && !v.completed && (
+                        <span className="badge badge-orange" style={{ fontSize: 10, marginLeft: 'auto' }}>Locked</span>
+                      )}
+                      {v.unlocked && !v.completed && (
+                        <span className="badge badge-cyan" style={{ fontSize: 10, marginLeft: 'auto' }}>Unlocked</span>
+                      )}
+                      {v.completed && (
+                        <span className="badge badge-green" style={{ fontSize: 10, marginLeft: 'auto' }}>Done</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!journeyLoading && videos.length === 0 && (
+              <div className="card" style={{ marginBottom: 18 }}>
+                No playlist loaded yet.
+              </div>
+            )}
+
+            {/* Tasks list moved to left panel */}
 
             {/* Hint */}
             <div style={{ padding: 14, borderRadius: 8, background: '#eff6ff', border: '1px solid #bfdbfe', marginBottom: 14 }}>
@@ -177,10 +460,13 @@ export default function VideoTask() {
             <div style={{ padding: 14, borderRadius: 8, background: '#fff', border: '1px solid #e8e8e4' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                 <span style={{ fontSize: 13, fontWeight: 500 }}>Progress</span>
-                <span style={{ fontSize: 13, color: 'var(--text3)' }}>{completed}/{tasksDone.length}</span>
+                <span style={{ fontSize: 13, color: 'var(--text3)' }}>{completed}/{orderedTasks.length}</span>
               </div>
               <div className="progress-bar">
-                <div className="progress-fill" style={{ width: `${(completed / tasksDone.length) * 100}%` }} />
+                <div
+                  className="progress-fill"
+                  style={{ width: `${orderedTasks.length ? (completed / orderedTasks.length) * 100 : 0}%` }}
+                />
               </div>
             </div>
           </div>

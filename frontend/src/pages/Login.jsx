@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import CodeBackground from '../components/CodeBackground'
 import ThemeToggle from '../components/ThemeToggle'
+import { apiRequest, setAuthSession, clearAuthSession } from '../utils/api'
 
 // Password strength logic
 function getStrength(pw) {
@@ -52,6 +53,7 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false)
   const [pwFocused, setPwFocused] = useState(false)
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   const strength = useMemo(() => getStrength(form.password), [form.password])
   const meta = strengthMeta[strength]
@@ -65,14 +67,40 @@ export default function Login() {
     boxSizing: 'border-box', fontFamily: 'inherit',
   })
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
     if (isSignup && strength < 3) {
       setError('Please choose a stronger password before continuing.')
       return
     }
+    setLoading(true)
     setError('')
-    navigate('/dashboard')
+    try {
+      clearAuthSession()
+      const endpoint = isSignup ? '/auth/signup' : '/auth/login'
+      const payload = isSignup
+        ? { name: form.name.trim(), email: form.email.trim(), password: form.password }
+        : { email: form.email.trim(), password: form.password }
+      const res = await apiRequest(endpoint, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })
+      setAuthSession(res)
+      const onboarding = res.onboarding || {}
+      if (isSignup) {
+        navigate('/onboarding/skills')
+      } else if (!onboarding.assessmentCompleted && onboarding.skillsSelected) {
+        navigate('/onboarding/assessment')
+      } else if (!onboarding.assessmentCompleted) {
+        navigate('/onboarding/skills')
+      } else {
+        navigate('/dashboard')
+      }
+    } catch (err) {
+      setError(err.message || 'Authentication failed')
+    } finally {
+      setLoading(false)
+    }
   }
 
   const switchMode = () => {
@@ -281,9 +309,10 @@ export default function Login() {
             <button
               type="submit"
               className="btn-primary"
-              style={{ width: '100%', padding: '11px', fontSize: 14, marginTop: 2 }}
+              style={{ width: '100%', padding: '11px', fontSize: 14, marginTop: 2, opacity: loading ? 0.8 : 1 }}
+              disabled={loading}
             >
-              {isSignup ? 'Create account' : 'Log in'}
+              {loading ? 'Please wait...' : isSignup ? 'Create account' : 'Log in'}
             </button>
           </form>
         </div>
