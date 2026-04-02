@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   getUserProgress,
+  getProgressSummary,
   updateProgress,
   progressUpdateValidators,
 } = require('../controllers/progressController');
@@ -12,7 +13,8 @@ const router = express.Router();
 
 router.use(authMiddleware);
 
-router.get('/user', asyncHandler(getUserProgress));
+router.get('/summary', asyncHandler(getProgressSummary));
+router.get('/user',    asyncHandler(getUserProgress));
 router.post('/update', progressUpdateValidators(), validate, asyncHandler(updateProgress));
 
 module.exports = router;

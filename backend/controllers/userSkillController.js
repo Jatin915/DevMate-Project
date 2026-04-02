@@ -4,6 +4,7 @@ const AssessmentResult = require('../models/AssessmentResult');
 const Roadmap = require('../models/Roadmap');
 const { ensureAssessmentsForLanguages } = require('../utils/assessmentCatalog');
 const { HttpError } = require('../middleware/errorHandler');
+const { getSuggestions, findBestMatch, LANGUAGES } = require('../utils/languageMatchingService');
 
 const LANGUAGE_ORDER = ['HTML', 'CSS', 'JavaScript', 'React', 'Node', 'Express', 'MongoDB'];
 
@@ -189,6 +190,93 @@ async function refreshSkillProgressFromResults(userId) {
   return skill;
 }
 
+// ── Custom journey ────────────────────────────────────────────────────────
+// POST /api/user/custom-journey
+// Saves a user-defined ordered language list, skips assessment entirely.
+async function saveCustomJourney(req, res, next) {
+  try {
+    const raw = Array.isArray(req.body.languages) ? req.body.languages : [];
+    if (raw.length === 0) {
+      next(new HttpError(400, 'At least one language is required'));
+      return;
+    }
+
+    // Validate + fuzzy-correct each language name
+    const customLanguages = [];
+    for (const entry of raw) {
+      const input = typeof entry === 'string' ? entry.trim() : '';
+      if (!input) continue;
+      const match = findBestMatch(input);
+      customLanguages.push(match ? match.match : input);
+    }
+
+    if (customLanguages.length === 0) {
+      next(new HttpError(400, 'No valid languages provided'));
+      return;
+    }
+
+    const firstLang = customLanguages[0]
+
+    const skillDoc = await UserSkill.findOneAndUpdate(
+      { userId: req.userId },
+      {
+        $set: {
+          userId: req.userId,
+          knownLanguages: customLanguages,
+          customLanguages,
+          assessmentCompleted: true,   // skip assessment
+          passedLanguages: [],
+          recommendedNextLanguage: firstLang,
+          startMode: 'custom',
+          currentLanguage: firstLang,
+          journeyStarted: true,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    await AssessmentResult.deleteMany({ userId: req.userId });
+
+    // Also write currentLanguage to User so roadmapController reads it correctly
+    const User = require('../models/User');
+    await User.findByIdAndUpdate(req.userId, {
+      $set: {
+        currentLanguage: firstLang,
+        upcomingLanguages: customLanguages.slice(1),
+      },
+    });
+
+    // Seed a Roadmap entry for the first language
+    await Roadmap.findOneAndUpdate(
+      { userId: req.userId, language: firstLang },
+      { $set: { userId: req.userId, language: firstLang, level: 'beginner' } },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    res.status(200).json({
+      success: true,
+      userSkill: skillDoc,
+      customLanguages,
+      next: { route: '/onboarding/html-playlist', currentLanguage: firstLang },
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
+// ── Language autocomplete ─────────────────────────────────────────────────
+// GET /api/user/language-suggestions?q=react
+async function getLanguageSuggestions(req, res, next) {
+  try {
+    const q = String(req.query.q || '').trim();
+    const suggestions = getSuggestions(q, 6);
+    const bestMatch = q.length >= 2 ? findBestMatch(q) : null;
+    res.json({ success: true, suggestions, bestMatch: bestMatch?.match || null });
+  } catch (e) {
+    next(e);
+  }
+}
+
 module.exports = {
   saveUserSkills,
   startFromBeginner,
@@ -196,4 +284,6 @@ module.exports = {
   userSkillValidators,
   refreshSkillProgressFromResults,
   computeNextLanguage,
+  saveCustomJourney,
+  getLanguageSuggestions,
 };

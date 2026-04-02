@@ -19,6 +19,7 @@ import OnboardingSkills from './pages/OnboardingSkills'
 import OnboardingAssessment from './pages/OnboardingAssessment'
 import BeginnerHtmlStart from './pages/BeginnerHtmlStart'
 import PlaylistInputPage from './pages/PlaylistInputPage'
+import OnboardingCustomJourney from './pages/OnboardingCustomJourney'
 import { getAuthToken, readOnboarding } from './utils/api'
 
 function RequireAuthAndOnboarding({ children }) {
@@ -83,6 +84,7 @@ export default function App() {
         <Route path="/onboarding/skills" element={<OnboardingRoute mode="skills" />} />
         <Route path="/onboarding/assessment" element={<OnboardingRoute mode="assessment" />} />
         <Route path="/onboarding/html-playlist" element={<PlaylistInputPage />} />
+        <Route path="/onboarding/custom-journey" element={<OnboardingCustomJourney />} />
         <Route path="/journey/playlist" element={<PlaylistInputPage />} />
         <Route path="/*"            element={<InnerRoutes />} />
         <Route path="*"             element={<Navigate to="/" />} />

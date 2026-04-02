@@ -8,21 +8,15 @@ export default function PlaylistInputPage() {
   const onboarding = readOnboarding()
 
   const language = useMemo(() => {
-    const raw =
-      params.get('language')
-      || onboarding?.currentLanguage
-      || onboarding?.recommendedNextLanguage
-      || 'HTML'
+    // URL param takes priority (set by OnboardingCustomJourney and journey navigation)
+    const fromParam = params.get('language')
+    if (fromParam && fromParam.trim()) return fromParam.trim()
 
-    const normalize = (v) => {
-      if (v === 'Node.js') return 'Node'
-      if (v === 'Express.js') return 'Express'
-      return v
-    }
+    // Fall back to onboarding state — works for both default and custom journeys
+    const fromStorage = onboarding?.currentLanguage || onboarding?.recommendedNextLanguage
+    if (fromStorage && fromStorage.trim()) return fromStorage.trim()
 
-    const allowed = ['HTML', 'CSS', 'JavaScript', 'React', 'Node', 'Express', 'MongoDB']
-    const normalized = normalize(String(raw || '').trim())
-    return allowed.includes(normalized) ? normalized : 'HTML'
+    return 'HTML'
   }, [params, onboarding])
 
   const [playlistUrl, setPlaylistUrl] = useState('')

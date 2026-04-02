@@ -41,33 +41,56 @@ async function getRoadmap(req, res, next) {
     // Merge user state with computed state (computed wins).
     const completedLanguages = [...new Set([...userCompleted, ...computedCompleted])]
 
-    const currentLanguage =
-      userCurrent ||
-      (knownLanguages.length
-        ? knownLanguages.slice().sort((a, b) => LANGUAGE_ORDER.indexOf(a) - LANGUAGE_ORDER.indexOf(b))[0]
-        : null) ||
-      'HTML'
+    // For custom journeys, use UserSkill.currentLanguage directly —
+    // custom languages are not in LANGUAGE_ORDER so we must not normalise them.
+    const isCustom = skill?.startMode === 'custom'
+    const customLangs = Array.isArray(skill?.customLanguages) ? skill.customLanguages : []
 
-    let currentIdx = LANGUAGE_ORDER.indexOf(currentLanguage)
-    if (currentIdx < 0) currentIdx = 0
-    const normalizedCurrentLanguage = LANGUAGE_ORDER[currentIdx]
+    let currentLanguage
+    let normalizedCurrentLanguage
 
-    // Index-based roadmap status only:
-    // - languages before currentLanguage are always "completed"
-    // - currentLanguage is "current"
-    // - languages after are "locked"
-    const roadmap = LANGUAGE_ORDER.map((lang) => {
-      const idx = LANGUAGE_ORDER.indexOf(lang)
-      if (idx < currentIdx) return { language: lang, status: 'completed' }
-      if (idx === currentIdx) return { language: lang, status: 'current' }
-      return { language: lang, status: 'locked' }
-    })
+    if (isCustom && customLangs.length > 0) {
+      // Source of truth for custom journeys is UserSkill, not User
+      currentLanguage = skill?.currentLanguage || customLangs[0]
+      normalizedCurrentLanguage = currentLanguage
+    } else {
+      currentLanguage =
+        userCurrent ||
+        (knownLanguages.length
+          ? knownLanguages.slice().sort((a, b) => LANGUAGE_ORDER.indexOf(a) - LANGUAGE_ORDER.indexOf(b))[0]
+          : null) ||
+        'HTML'
+      let currentIdx = LANGUAGE_ORDER.indexOf(currentLanguage)
+      if (currentIdx < 0) currentIdx = 0
+      normalizedCurrentLanguage = LANGUAGE_ORDER[currentIdx]
+    }
+
+    let roadmap
+    if (isCustom && customLangs.length > 0) {
+      const currentCustomIdx = customLangs.indexOf(currentLanguage)
+      roadmap = customLangs.map((lang, idx) => {
+        if (idx < currentCustomIdx) return { language: lang, status: 'completed' }
+        if (idx === currentCustomIdx) return { language: lang, status: 'current' }
+        return { language: lang, status: 'locked' }
+      })
+    } else {
+      // Default: index-based status against LANGUAGE_ORDER
+      const currentIdx = LANGUAGE_ORDER.indexOf(normalizedCurrentLanguage)
+      roadmap = LANGUAGE_ORDER.map((lang) => {
+        const idx = LANGUAGE_ORDER.indexOf(lang)
+        if (idx < currentIdx) return { language: lang, status: 'completed' }
+        if (idx === currentIdx) return { language: lang, status: 'current' }
+        return { language: lang, status: 'locked' }
+      })
+    }
 
     res.json({
       knownLanguages,
       completedLanguages,
       currentLanguage: normalizedCurrentLanguage,
       roadmap,
+      startMode:       skill?.startMode || 'assessment',
+      customLanguages: Array.isArray(skill?.customLanguages) ? skill.customLanguages : [],
     })
   } catch (e) {
     next(e)

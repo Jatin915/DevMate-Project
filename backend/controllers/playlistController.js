@@ -39,9 +39,7 @@ function languagePlaylistValidators() {
 
 async function createLanguagePlaylistForUser({ userId, language, playlistUrl, title, description }) {
   const normalizedLanguage = normalizeLanguage(language);
-  if (!LANGUAGE_ORDER.includes(normalizedLanguage)) {
-    throw new HttpError(400, `Unsupported language: ${normalizedLanguage}`);
-  }
+  // No language whitelist — custom journeys can use any language name.
 
   const extracted = extractPlaylistId(playlistUrl);
   if (!extracted) {
@@ -105,7 +103,14 @@ async function createLanguagePlaylistForUser({ userId, language, playlistUrl, ti
   const user = await User.findById(userId);
   if (user) {
     const completed = Array.isArray(user.completedLanguages) ? user.completedLanguages : [];
-    const upcomingFromOrder = LANGUAGE_ORDER.filter((l) => !completed.includes(l) && l !== normalizedLanguage);
+    // For custom journeys the upcoming list comes from UserSkill.customLanguages;
+    // for default journeys fall back to LANGUAGE_ORDER.
+    const UserSkill = require('../models/UserSkill');
+    const skill = await UserSkill.findOne({ userId }).lean();
+    const sourceOrder = (skill?.startMode === 'custom' && Array.isArray(skill?.customLanguages) && skill.customLanguages.length > 0)
+      ? skill.customLanguages
+      : LANGUAGE_ORDER;
+    const upcomingFromOrder = sourceOrder.filter((l) => !completed.includes(l) && l !== normalizedLanguage);
     user.currentLanguage = normalizedLanguage;
     user.upcomingLanguages = upcomingFromOrder;
     await user.save();

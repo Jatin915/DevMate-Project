@@ -562,24 +562,39 @@ export default function CodeEditor() {
                           </div>
                         )}
 
-                        {/* Optimized code */}
-                        {aiResult.optimizedCode && (
-                          <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)' }}>
-                            <div style={{ padding: '8px 12px', background: 'var(--bg3)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>⚡ Optimized version</span>
+                        {/* Optimized code — only shown when score >= 70 */}
+                        {aiResult.score >= 70 && aiResult.optimizedCode && (
+                          <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid rgba(99,102,241,0.4)' }}>
+                            <div style={{
+                              padding: '10px 14px',
+                              background: 'rgba(99,102,241,0.08)',
+                              borderBottom: '1px solid rgba(99,102,241,0.2)',
+                              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                            }}>
+                              <div>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)' }}>⚡ Optimized version</span>
+                                <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 8 }}>cleaner · more efficient</span>
+                              </div>
                               <button
-                                onClick={() => setCode(aiResult.optimizedCode)}
-                                style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, background: 'var(--accent)', color: '#fff', border: 'none', cursor: 'pointer' }}
+                                onClick={() => {
+                                  setCode(aiResult.optimizedCode)
+                                  setSaveResult(null)
+                                }}
+                                style={{
+                                  fontSize: 12, padding: '5px 12px', borderRadius: 6,
+                                  background: 'var(--accent)', color: '#fff',
+                                  border: 'none', cursor: 'pointer', fontWeight: 600,
+                                }}
                               >
-                                Use this
+                                Use Optimized Version
                               </button>
                             </div>
                             <pre style={{
-                              margin: 0, padding: '12px 14px',
+                              margin: 0, padding: '14px 16px',
                               background: '#0d1117', color: '#e6edf3',
-                              fontSize: 11.5, fontFamily: 'ui-monospace, Consolas, monospace',
-                              lineHeight: 1.6, overflowX: 'auto', whiteSpace: 'pre-wrap',
-                              maxHeight: 200, overflowY: 'auto',
+                              fontSize: 12, fontFamily: 'ui-monospace, Consolas, monospace',
+                              lineHeight: 1.65, overflowX: 'auto', whiteSpace: 'pre-wrap',
+                              maxHeight: 220, overflowY: 'auto',
                             }}>
                               {aiResult.optimizedCode}
                             </pre>

@@ -7,9 +7,10 @@ const userSkillSchema = new mongoose.Schema(
     assessmentCompleted: { type: Boolean, default: false },
     passedLanguages: [{ type: String, trim: true }],
     recommendedNextLanguage: { type: String, default: null },
-    startMode: { type: String, enum: ['assessment', 'beginner'], default: 'assessment' },
+    startMode: { type: String, enum: ['assessment', 'beginner', 'custom'], default: 'assessment' },
     currentLanguage: { type: String, default: null },
     journeyStarted: { type: Boolean, default: false },
+    customLanguages: [{ type: String, trim: true }], // ordered list for custom journeys
   },
   { timestamps: true },
 );

@@ -8,9 +8,10 @@ const codeSubmissionSchema = new mongoose.Schema(
     isDraft: { type: Boolean, default: false, index: true },
     status: { type: String, enum: ['pending', 'passed', 'failed'], default: 'pending' },
     executionResult: {
-      output: String,
-      error: String,
-      score: { type: Number, min: 0, max: 100 },
+      output:        String,
+      error:         String,
+      score:         { type: Number, min: 0, max: 100 },
+      optimizedCode: { type: String, default: null },
     },
     submittedAt: { type: Date, default: Date.now },
   },

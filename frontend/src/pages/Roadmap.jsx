@@ -63,11 +63,22 @@ export default function Roadmap() {
   }, [])
 
   // Backend returns roadmap[] already ordered and with correct statuses.
-  // We re-derive from LANGUAGE_ORDER to guarantee correct ordering even if
-  // the API response order ever changes.
+  // For custom journeys, use the user's customLanguages order instead of LANGUAGE_ORDER.
+  const isCustom = data?.startMode === 'custom'
+
   const roadmapEntries = (() => {
     if (!data?.roadmap) return []
     const byLang = new Map(data.roadmap.map((r) => [r.language, r.status]))
+
+    if (isCustom && Array.isArray(data.customLanguages) && data.customLanguages.length > 0) {
+      // Custom journey: render in the user's chosen order, include all their languages
+      return data.customLanguages.map((lang) => ({
+        language: lang,
+        status: byLang.get(lang) || (lang === data.currentLanguage ? 'current' : 'locked'),
+      }))
+    }
+
+    // Default journey: fixed LANGUAGE_ORDER
     return LANGUAGE_ORDER.map((lang) => ({
       language: lang,
       status: byLang.get(lang) || 'locked',

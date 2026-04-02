@@ -16,6 +16,7 @@ const assessmentRoutes = require('./assessment.routes');
 const aiRoutes = require('./ai.routes');
 const taskGenerationRoutes = require('./taskGeneration.routes');
 const miniProjectsRoutes = require('./miniProjects.routes');
+const simulationRoutes   = require('./simulation.routes');
 const { submitCodeLegacy } = require('../controllers/codeSubmissionController');
 const { authMiddleware } = require('../middleware/authMiddleware');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -36,6 +37,7 @@ router.use('/journey', journeyRoutes);
 router.use('/user', userRoutes);
 router.use('/ai', aiRoutes);
 router.use('/mini-projects', miniProjectsRoutes);
+router.use('/simulation',   simulationRoutes);
 router.use('/', taskGenerationRoutes);
 router.use('/', assessmentRoutes);
 

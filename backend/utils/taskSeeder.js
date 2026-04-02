@@ -101,29 +101,11 @@ async function generateTasksWithOpenRouter(videoTitle) {
 }
 
 async function ensureTasksForVideo(videoId, videoTitleOverride) {
+  // Always return existing tasks — never regenerate once created.
   const existing = await Task.find({ videoId }).sort({ order: 1 });
-  if (existing.length > 0) {
-    // If users already completed tasks for this video, never overwrite them.
-    const completedCount = await Progress.countDocuments({
-      completed: true,
-      taskId: { $in: existing.map((t) => t._id) },
-    });
-    if (completedCount > 0) return existing;
+  if (existing.length > 0) return existing;
 
-    // If tasks exist but were never completed, we can try regenerating once.
-    // (Prevents old hardcoded tasks from sticking around forever.)
-    try {
-      const canRemove = await CodeSubmission.countDocuments({
-        taskId: { $in: existing.map((t) => t._id) },
-      });
-      if (canRemove > 0) return existing; // don't disturb evaluated submissions
-
-      await Task.deleteMany({ videoId });
-    } catch {
-      return existing;
-    }
-  }
-
+  // No tasks yet — generate for the first time.
   const video = await Video.findById(videoId).select('title').lean();
   const videoTitle = (videoTitleOverride && String(videoTitleOverride).trim()) || video?.title || 'video topic';
 
