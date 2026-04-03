@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, Lock, PlayCircle } from 'lucide-react'
 import Sidebar from '../components/Sidebar'
 import PageWrapper from '../components/PageWrapper'
-import { apiRequest } from '../utils/api'
+import { apiRequest, clearAuthSession, setAuthSession, getAuthToken } from '../utils/api'
 
 // Canonical language order — matches backend LANGUAGE_ORDER exactly
 const LANGUAGE_ORDER = ['HTML', 'CSS', 'JavaScript', 'React', 'Node', 'Express', 'MongoDB']
@@ -35,6 +35,33 @@ export default function Roadmap() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // ── Reset state ───────────────────────────────────────────────────────────
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [resetting, setResetting]     = useState(false)
+
+  const handleReset = async () => {
+    setResetting(true)
+    try {
+      await apiRequest('/roadmap/reset', { method: 'POST' })
+      // Clear all cached onboarding/journey state from localStorage
+      // Keep the auth token so the user stays logged in
+      localStorage.removeItem('dm-onboarding')
+      localStorage.removeItem('dm-user')
+      localStorage.removeItem('dm-code-eval-context')
+      // Clear any draft keys
+      Object.keys(localStorage)
+        .filter((k) => k.startsWith('dm-draft-'))
+        .forEach((k) => localStorage.removeItem(k))
+      // Redirect to onboarding so they can choose a new roadmap
+      navigate('/onboarding/skills')
+    } catch (e) {
+      setError(e.message || 'Reset failed. Please try again.')
+      setShowConfirm(false)
+    } finally {
+      setResetting(false)
+    }
+  }
 
   useEffect(() => {
     let mounted = true
@@ -100,15 +127,96 @@ export default function Roadmap() {
       <Sidebar />
       <main className="main-content">
         <PageWrapper>
-          <h1 className="page-title">Roadmap</h1>
-          <p className="page-subtitle" style={{ marginBottom: 18 }}>
-            Your learning path from HTML to MongoDB. Progress persists after refresh.
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+            <div>
+              <h1 className="page-title" style={{ marginBottom: 4 }}>Roadmap</h1>
+              <p className="page-subtitle" style={{ marginBottom: 0 }}>
+                Your learning path. Progress persists after refresh.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowConfirm(true)}
+              style={{
+                padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                background: 'transparent', border: '1px solid var(--red)',
+                color: 'var(--red)', cursor: 'pointer', flexShrink: 0,
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239,68,68,0.08)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+            >
+              🔄 Reset Roadmap
+            </button>
+          </div>
+
+          {/* ── Confirmation modal ── */}
+          {showConfirm && (
+            <div style={{
+              position: 'fixed', inset: 0, zIndex: 100,
+              background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: 20,
+            }}>
+              <div className="card" style={{
+                maxWidth: 420, width: '100%', padding: 28,
+                border: '1px solid var(--border)', borderRadius: 16,
+                animation: 'fadeUp 0.2s ease both',
+              }}>
+                <div style={{ fontSize: 22, marginBottom: 10 }}>⚠️</div>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
+                  Reset your roadmap?
+                </div>
+                <p style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.7, marginBottom: 18 }}>
+                  This will permanently remove:
+                </p>
+                <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 22 }}>
+                  {[
+                    '🗑 All playlists and videos',
+                    '🗑 All task and video progress',
+                    '🗑 All code submissions and drafts',
+                    '🗑 Mini project progress',
+                    '🗑 Assessment results',
+                    '🗑 Roadmap data',
+                  ].map((item, i) => (
+                    <li key={i} style={{ fontSize: 13, color: 'var(--text2)', display: 'flex', gap: 8 }}>
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, color: 'var(--green)', fontWeight: 600 }}>
+                    ✅ Your XP and streak will remain safe.
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    className="btn-secondary"
+                    style={{ flex: 1 }}
+                    onClick={() => setShowConfirm(false)}
+                    disabled={resetting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    style={{
+                      flex: 1, padding: '10px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                      background: 'var(--red)', color: '#fff', border: 'none', cursor: 'pointer',
+                      opacity: resetting ? 0.75 : 1, transition: 'opacity 0.15s',
+                    }}
+                    onClick={handleReset}
+                    disabled={resetting}
+                  >
+                    {resetting ? 'Resetting...' : 'Confirm Reset'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div style={{
               padding: 14, background: '#fef2f2', border: '1px solid #fecaca',
-              borderRadius: 12, color: '#b91c1c', marginBottom: 16,
+              borderRadius: 12, color: '#b91c1c', marginBottom: 16, marginTop: 16,
             }}>
               {error}
             </div>

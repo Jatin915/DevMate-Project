@@ -24,7 +24,13 @@ export default function OnboardingAssessment() {
           const initialResults = {}
           for (const t of res.assessments) {
             seeded[t.language] = t.starterCode || ''
-            if (t.result) initialResults[t.language] = t.result
+            if (t.result) initialResults[t.language] = {
+              score:       t.result.score,
+              passed:      t.result.passed,
+              feedback:    t.result.feedback    || '',
+              errors:      t.result.errors      || [],
+              suggestions: t.result.suggestions || [],
+            }
           }
           setCodes(seeded)
           setResults(initialResults)
@@ -63,7 +69,13 @@ export default function OnboardingAssessment() {
       })
       setResults((prev) => ({
         ...prev,
-        [currentTask.language]: { score: res.score, passed: res.passed, feedback: res.feedback },
+        [currentTask.language]: {
+          score:       res.score,
+          passed:      res.passed,
+          feedback:    res.feedback,
+          errors:      res.errors      || [],
+          suggestions: res.suggestions || [],
+        },
       }))
 
       const unlockedLang = res.recommendedNextLanguage || res.currentLanguage || 'HTML'
@@ -154,18 +166,77 @@ export default function OnboardingAssessment() {
               </button>
             </div>
 
-            {results[currentTask.language] && (
-              <div className="card" style={{ marginTop: 12, borderColor: results[currentTask.language].passed ? 'var(--green)' : 'var(--orange)' }}>
-                <div style={{ fontWeight: 600 }}>
-                  Score: {results[currentTask.language].score}% {results[currentTask.language].passed ? '• Passed' : '• Retry required'}
-                </div>
-                {results[currentTask.language].feedback && (
-                  <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 6 }}>
-                    {results[currentTask.language].feedback}
+            {results[currentTask.language] && (() => {
+              const r = results[currentTask.language]
+              const passed = r.passed
+              return (
+                <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {/* Score card */}
+                  <div className="card" style={{
+                    borderColor: passed ? 'var(--green)' : 'var(--orange)',
+                    background: passed ? 'rgba(16,185,129,0.06)' : '#fffbeb',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: passed ? 'var(--green)' : '#92400e', letterSpacing: 0.5, marginBottom: 2 }}>
+                          {passed ? 'PASSED ✅' : 'RETRY REQUIRED ⚠️'}
+                        </div>
+                        <div style={{ fontSize: 28, fontWeight: 900, color: passed ? 'var(--green)' : '#f59e0b', lineHeight: 1 }}>
+                          {r.score}<span style={{ fontSize: 13, fontWeight: 500 }}>/100</span>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text3)' }}>Pass score: 80%</div>
+                    </div>
+                    {r.feedback && (
+                      <div style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>{r.feedback}</div>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
+
+                  {/* Errors */}
+                  {r.errors?.length > 0 && (
+                    <div style={{ padding: 12, borderRadius: 10, background: '#fef2f2', border: '1px solid #fecaca' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#b91c1c', marginBottom: 8 }}>❌ Errors</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {r.errors.map((e, i) => (
+                          <div key={i} style={{ fontSize: 12, color: '#b91c1c', display: 'flex', gap: 6 }}>
+                            <span>•</span><span style={{ lineHeight: 1.5 }}>{e}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Suggestions */}
+                  {r.suggestions?.length > 0 && (
+                    <div style={{ padding: 12, borderRadius: 10, background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', marginBottom: 8 }}>💡 Suggestions</div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {r.suggestions.map((s, i) => (
+                          <div key={i} style={{ fontSize: 12, color: 'var(--text2)', display: 'flex', gap: 6 }}>
+                            <span style={{ color: 'var(--accent)' }}>{i + 1}.</span>
+                            <span style={{ lineHeight: 1.5 }}>{s}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Retry button when failed */}
+                  {!passed && (
+                    <button
+                      className="btn-secondary"
+                      style={{ alignSelf: 'flex-start', fontSize: 13 }}
+                      onClick={() => {
+                        setResults((prev) => { const n = { ...prev }; delete n[currentTask.language]; return n })
+                        setCodes((prev) => ({ ...prev, [currentTask.language]: currentTask.starterCode || '' }))
+                      }}
+                    >
+                      🔄 Retry
+                    </button>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
 

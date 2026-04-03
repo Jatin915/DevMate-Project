@@ -23,6 +23,38 @@ export default function VideoTask() {
   const [activeTaskId, setActiveTaskId] = useState(null)
   const [videoHover, setVideoHover] = useState(false)
 
+  // ── Change playlist modal ─────────────────────────────────────────────────
+  const [showChangeModal, setShowChangeModal] = useState(false)
+  const [newPlaylistUrl, setNewPlaylistUrl]   = useState('')
+  const [changing, setChanging]               = useState(false)
+  const [changeError, setChangeError]         = useState('')
+
+  const handleChangePlaylist = async () => {
+    if (!newPlaylistUrl.trim()) { setChangeError('Please paste a YouTube playlist URL.'); return }
+    if (!language) { setChangeError('No language selected.'); return }
+    setChanging(true)
+    setChangeError('')
+    try {
+      const res = await apiRequest('/playlists/change', {
+        method: 'PUT',
+        body: JSON.stringify({ language, playlistUrl: newPlaylistUrl.trim() }),
+      })
+      // Reload the video list with the new playlist
+      setPlaylistId(res.playlistId || null)
+      setVideos(res.videos || [])
+      setTasks([])
+      setActiveTaskId(null)
+      const first = (res.videos || []).find((v) => v.unlocked) || res.videos?.[0] || null
+      setActiveVideoId(first?.id ? String(first.id) : null)
+      setShowChangeModal(false)
+      setNewPlaylistUrl('')
+    } catch (e) {
+      setChangeError(e.message || 'Failed to update playlist.')
+    } finally {
+      setChanging(false)
+    }
+  }
+
   const activeVideo = useMemo(
     () => videos.find((v) => String(v.id) === String(activeVideoId)) || null,
     [videos, activeVideoId],
@@ -206,12 +238,79 @@ export default function VideoTask() {
             </h1>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-secondary" style={{ padding: '7px 16px', fontSize: 13 }}>← Previous</button>
+            <button
+              className="btn-secondary"
+              style={{ padding: '7px 14px', fontSize: 13 }}
+              onClick={() => { setShowChangeModal(true); setChangeError(''); setNewPlaylistUrl('') }}
+            >
+              🔄 Change Playlist
+            </button>
             <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 13 }} onClick={() => navigate('/roadmap')}>
               Unlock Next →
             </button>
           </div>
         </div>
+
+        {/* ── Change Playlist Modal ── */}
+        {showChangeModal && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+          }}>
+            <div className="card" style={{
+              maxWidth: 460, width: '100%', padding: 28,
+              borderRadius: 16, animation: 'fadeUp 0.2s ease both',
+            }}>
+              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+                Change Playlist — {language}
+              </div>
+              <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 18, lineHeight: 1.6 }}>
+                This will remove the current playlist and all its task progress for <strong>{language}</strong>.
+                Other languages are not affected.
+              </p>
+              <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 6 }}>
+                New YouTube Playlist URL
+              </label>
+              <input
+                type="text"
+                value={newPlaylistUrl}
+                onChange={(e) => setNewPlaylistUrl(e.target.value)}
+                placeholder="https://www.youtube.com/playlist?list=..."
+                style={{
+                  width: '100%', padding: '10px 14px', borderRadius: 8, boxSizing: 'border-box',
+                  background: 'var(--bg3)', border: '1px solid var(--border2)',
+                  color: 'var(--text)', fontSize: 14, outline: 'none', marginBottom: 8,
+                  transition: 'border-color 0.18s',
+                }}
+                onFocus={(e) => { e.target.style.borderColor = 'var(--accent)' }}
+                onBlur={(e)  => { e.target.style.borderColor = 'var(--border2)' }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleChangePlaylist() }}
+              />
+              {changeError && (
+                <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>{changeError}</div>
+              )}
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button
+                  className="btn-secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => setShowChangeModal(false)}
+                  disabled={changing}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary"
+                  style={{ flex: 1, opacity: changing ? 0.75 : 1 }}
+                  onClick={handleChangePlaylist}
+                  disabled={changing}
+                >
+                  {changing ? 'Updating...' : 'Update Playlist'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {journeyError && (
           <div style={{ padding: 14, background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#b91c1c' }}>

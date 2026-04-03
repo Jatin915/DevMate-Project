@@ -12,6 +12,8 @@ const userSchema = new mongoose.Schema(
     // Daily login streak tracking (updates on successful /auth/login).
     lastLoginDate: { type: Date, default: null },
     streakCount: { type: Number, default: 0, min: 0 },
+    // Accumulated XP — preserved across roadmap resets.
+    totalXP: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true },
 );

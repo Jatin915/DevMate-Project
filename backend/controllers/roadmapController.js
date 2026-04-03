@@ -5,6 +5,12 @@ const UserSkill = require('../models/UserSkill')
 const User = require('../models/User')
 const Video = require('../models/Video')
 const VideoProgress = require('../models/VideoProgress')
+const Playlist = require('../models/Playlist')
+const Task = require('../models/Task')
+const Progress = require('../models/Progress')
+const CodeSubmission = require('../models/CodeSubmission')
+const AssessmentResult = require('../models/AssessmentResult')
+const UserMiniProject = require('../models/UserMiniProject')
 
 const LANGUAGE_ORDER = ['HTML', 'CSS', 'JavaScript', 'React', 'Node', 'Express', 'MongoDB']
 
@@ -131,4 +137,69 @@ async function updateRoadmap(req, res, next) {
   }
 }
 
-module.exports = { getRoadmap, updateRoadmap, roadmapUpdateValidators };
+// ── POST /api/roadmap/reset ───────────────────────────────────────────────
+async function resetRoadmap(req, res, next) {
+  try {
+    const userId = req.userId
+
+    // ── Snapshot XP before deleting any data ─────────────────────────────
+    // XP is computed from VideoProgress + Progress + Roadmap counts.
+    // We read those counts NOW, before deletion, and persist the total
+    // to User.totalXP so it survives the reset.
+    const [topicsDone, tasksSubmitted, projectAgg] = await Promise.all([
+      VideoProgress.countDocuments({ userId, completed: true }),
+      Progress.countDocuments({ userId, completed: true }),
+      Roadmap.aggregate([
+        { $match: { userId } },
+        { $group: { _id: null, sum: { $sum: { $ifNull: ['$miniProjectsCompleted', 0] } } } },
+      ]),
+    ])
+    const projectsBuilt = projectAgg?.[0]?.sum || 0
+    const earnedXP = topicsDone * 10 + tasksSubmitted * 5 + projectsBuilt * 20
+
+    // Read existing accumulated XP so we add to it, not overwrite it
+    const userBefore = await User.findById(userId).select('totalXP').lean()
+    const previousXP = userBefore?.totalXP || 0
+    const preservedXP = previousXP + earnedXP
+
+    console.log(`[Reset] userId: ${userId} | earnedXP: ${earnedXP} | previousXP: ${previousXP} | preservedXP: ${preservedXP}`)
+
+    // 1. Collect all playlist IDs owned by this user
+    const playlists = await Playlist.find({ userId }).select('_id').lean()
+    const playlistIds = playlists.map((p) => p._id)
+
+    // 2. Collect all video IDs from those playlists
+    const videos = await Video.find({ playlistId: { $in: playlistIds } }).select('_id').lean()
+    const videoIds = videos.map((v) => v._id)
+
+    // 3. Delete in dependency order
+    await CodeSubmission.deleteMany({ userId })
+    await Progress.deleteMany({ userId })
+    await VideoProgress.deleteMany({ userId })
+    await Task.deleteMany({ videoId: { $in: videoIds } })
+    await Video.deleteMany({ playlistId: { $in: playlistIds } })
+    await Playlist.deleteMany({ userId })
+    await Roadmap.deleteMany({ userId })
+    await AssessmentResult.deleteMany({ userId })
+    await UserMiniProject.deleteMany({ userId })
+    await UserSkill.deleteOne({ userId })
+
+    // 4. Reset journey fields only — streakCount, lastLoginDate, and totalXP are preserved
+    await User.findByIdAndUpdate(userId, {
+      $set: {
+        currentLanguage:    null,
+        completedLanguages: [],
+        upcomingLanguages:  [],
+        totalXP:            preservedXP,
+      },
+    })
+
+    console.log(`[Reset] XP preserved: ${preservedXP}`)
+
+    res.json({ success: true, message: 'Roadmap reset successfully' })
+  } catch (e) {
+    next(e)
+  }
+}
+
+module.exports = { getRoadmap, updateRoadmap, roadmapUpdateValidators, resetRoadmap };

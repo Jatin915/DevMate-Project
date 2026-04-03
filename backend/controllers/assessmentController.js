@@ -43,9 +43,12 @@ async function getAssessments(req, res, next) {
         difficulty: t.difficulty,
         result: byLanguage[t.language]
           ? {
-              score: byLanguage[t.language].score,
-              passed: byLanguage[t.language].passed,
-              updatedAt: byLanguage[t.language].updatedAt,
+              score:       byLanguage[t.language].score,
+              passed:      byLanguage[t.language].passed,
+              feedback:    byLanguage[t.language].feedback    || '',
+              errors:      byLanguage[t.language].errors      || [],
+              suggestions: byLanguage[t.language].suggestions || [],
+              updatedAt:   byLanguage[t.language].updatedAt,
             }
           : null,
       })),
@@ -77,11 +80,14 @@ async function submitAssessment(req, res, next) {
       { userId: req.userId, language },
       {
         $set: {
-          userId: req.userId,
+          userId:        req.userId,
           language,
           submittedCode: code,
-          score: evaluation.score,
-          passed: evaluation.passed,
+          score:         evaluation.score,
+          passed:        evaluation.passed,
+          feedback:      evaluation.feedback || '',
+          errors:        evaluation.errors   || [],
+          suggestions:   evaluation.suggestions || [],
         },
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
@@ -91,18 +97,20 @@ async function submitAssessment(req, res, next) {
     const allPassed = !!refreshed?.assessmentCompleted;
 
     res.json({
-      success: true,
+      success:                 true,
       language,
-      score: evaluation.score,
-      passed: evaluation.passed,
-      feedback: evaluation.feedback,
-      evaluator: evaluation.provider,
+      score:                   evaluation.score,
+      passed:                  evaluation.passed,
+      feedback:                evaluation.feedback,
+      errors:                  evaluation.errors      || [],
+      suggestions:             evaluation.suggestions || [],
+      evaluator:               evaluation.provider,
       result,
-      assessmentCompleted: allPassed,
-      passedLanguages: refreshed?.passedLanguages || [],
+      assessmentCompleted:     allPassed,
+      passedLanguages:         refreshed?.passedLanguages         || [],
       recommendedNextLanguage: refreshed?.recommendedNextLanguage || null,
-      currentLanguage: refreshed?.currentLanguage || null,
-      nextModuleUnlocked: allPassed,
+      currentLanguage:         refreshed?.currentLanguage         || null,
+      nextModuleUnlocked:      allPassed,
     });
   } catch (e) {
     next(e);

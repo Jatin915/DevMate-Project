@@ -37,7 +37,7 @@ function languagePlaylistValidators() {
   ];
 }
 
-async function createLanguagePlaylistForUser({ userId, language, playlistUrl, title, description }) {
+async function createLanguagePlaylistForUser({ userId, language, playlistUrl, title, description, skipUserUpdate = false }) {
   const normalizedLanguage = normalizeLanguage(language);
   // No language whitelist — custom journeys can use any language name.
 
@@ -99,21 +99,22 @@ async function createLanguagePlaylistForUser({ userId, language, playlistUrl, ti
     );
   }
 
-  // Update user language queue
-  const user = await User.findById(userId);
-  if (user) {
-    const completed = Array.isArray(user.completedLanguages) ? user.completedLanguages : [];
-    // For custom journeys the upcoming list comes from UserSkill.customLanguages;
-    // for default journeys fall back to LANGUAGE_ORDER.
-    const UserSkill = require('../models/UserSkill');
-    const skill = await UserSkill.findOne({ userId }).lean();
-    const sourceOrder = (skill?.startMode === 'custom' && Array.isArray(skill?.customLanguages) && skill.customLanguages.length > 0)
-      ? skill.customLanguages
-      : LANGUAGE_ORDER;
-    const upcomingFromOrder = sourceOrder.filter((l) => !completed.includes(l) && l !== normalizedLanguage);
-    user.currentLanguage = normalizedLanguage;
-    user.upcomingLanguages = upcomingFromOrder;
-    await user.save();
+  // Update user language queue — skipped when changing an existing playlist
+  // to avoid overwriting currentLanguage or any other user fields unnecessarily.
+  if (!skipUserUpdate) {
+    const user = await User.findById(userId);
+    if (user) {
+      const completed = Array.isArray(user.completedLanguages) ? user.completedLanguages : [];
+      const UserSkill = require('../models/UserSkill');
+      const skill = await UserSkill.findOne({ userId }).lean();
+      const sourceOrder = (skill?.startMode === 'custom' && Array.isArray(skill?.customLanguages) && skill.customLanguages.length > 0)
+        ? skill.customLanguages
+        : LANGUAGE_ORDER;
+      const upcomingFromOrder = sourceOrder.filter((l) => !completed.includes(l) && l !== normalizedLanguage);
+      user.currentLanguage = normalizedLanguage;
+      user.upcomingLanguages = upcomingFromOrder;
+      await user.save();
+    }
   }
 
   return { playlist, normalizedLanguage, videoRows };
@@ -276,6 +277,73 @@ async function deletePlaylist(req, res, next) {
   }
 }
 
+// ── PUT /api/playlists/change ─────────────────────────────────────────────
+// Replace the existing playlist for a language with a new one.
+// Deletes old videos, tasks, progress, and video-progress for that language only.
+async function changeLanguagePlaylist(req, res, next) {
+  try {
+    const { language, playlistUrl } = req.body;
+    if (!language || !playlistUrl) {
+      next(new HttpError(400, 'language and playlistUrl are required'));
+      return;
+    }
+
+    const normalizedLanguage = normalizeLanguage(language);
+
+    // ── 1. Find and delete the existing playlist for this language ────────
+    const existing = await Playlist.findOne({ userId: req.userId, language: normalizedLanguage });
+    if (existing) {
+      const oldVideos = await Video.find({ playlistId: existing._id }).select('_id').lean();
+      const oldVideoIds = oldVideos.map((v) => v._id);
+      const oldTasks = await Task.find({ videoId: { $in: oldVideoIds } }).select('_id').lean();
+      const oldTaskIds = oldTasks.map((t) => t._id);
+
+      // Delete in dependency order — only for this language
+      await CodeSubmission.deleteMany({ taskId: { $in: oldTaskIds } });
+      await Progress.deleteMany({ taskId: { $in: oldTaskIds } });
+      await VideoProgress.deleteMany({ userId: req.userId, playlistId: existing._id });
+      await Task.deleteMany({ videoId: { $in: oldVideoIds } });
+      await Video.deleteMany({ playlistId: existing._id });
+      await Playlist.deleteOne({ _id: existing._id });
+    }
+
+    // ── 2. Create the new playlist — skip user field update since we're
+    //       only swapping the playlist, not changing the current language.
+    const { playlist, normalizedLanguage: lang, videoRows } = await createLanguagePlaylistForUser({
+      userId: req.userId,
+      language: normalizedLanguage,
+      playlistUrl,
+      skipUserUpdate: true,
+    });
+
+    // ── 3. Return the new video list so the frontend can reload ───────────
+    const videos = await Video.find({ playlistId: playlist._id }).sort({ order: 1 }).lean();
+    const progressRows = await VideoProgress.find({ userId: req.userId, playlistId: playlist._id }).lean();
+    const byVideo = new Map(progressRows.map((p) => [p.videoId.toString(), p]));
+
+    res.json({
+      success: true,
+      playlistId: playlist._id,
+      language: lang,
+      videos: videos.map((v) => {
+        const p = byVideo.get(v._id.toString());
+        return {
+          id:             v._id,
+          language:       v.language,
+          title:          v.title,
+          youtubeVideoId: v.youtubeVideoId,
+          thumbnail:      v.thumbnail,
+          order:          v.order,
+          unlocked:       p ? !!p.unlocked : !!v.unlocked,
+          completed:      p ? !!p.completed : !!v.completed,
+        };
+      }),
+    });
+  } catch (e) {
+    next(e);
+  }
+}
+
 module.exports = {
   addPlaylist,
   addLanguagePlaylist,
@@ -286,4 +354,5 @@ module.exports = {
   playlistValidators,
   languagePlaylistValidators,
   assertPlaylistOwner,
+  changeLanguagePlaylist,
 };

@@ -63,7 +63,7 @@ async function getDashboard(req, res, next) {
     const userId = req.userId;
 
     // Streak is stored on user and updated on /auth/login.
-    const user = await User.findById(userId).select('streakCount currentLanguage').lean();
+    const user = await User.findById(userId).select('streakCount currentLanguage totalXP').lean();
     const streak = user?.streakCount || 0;
 
     const topicsDone = await VideoProgress.countDocuments({ userId, completed: true });
@@ -76,8 +76,13 @@ async function getDashboard(req, res, next) {
     ]);
     const projectsBuilt = projectAgg?.[0]?.sum || 0;
 
-    // XP computed dynamically from completion counts.
-    const xpPoints = topicsDone * 10 + tasksSubmitted * 5 + projectsBuilt * 20;
+    // XP = accumulated (preserved across resets) + current session activity.
+    // user.totalXP holds XP earned in all previous journeys.
+    // Current session XP is computed from live completion counts.
+    const sessionXP = topicsDone * 10 + tasksSubmitted * 5 + projectsBuilt * 20;
+    const xpPoints  = (user?.totalXP || 0) + sessionXP;
+
+    console.log(`[Dashboard] userId: ${userId} | totalXP: ${user?.totalXP || 0} | sessionXP: ${sessionXP} | xpPoints: ${xpPoints}`);
 
     // ── Roadmap progress ──────────────────────────────────────────────────
     // Use the user's actual language list:
