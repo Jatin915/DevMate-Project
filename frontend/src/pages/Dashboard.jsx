@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
 import PageWrapper from '../components/PageWrapper'
 import ThemeToggle from '../components/ThemeToggle'
+import { apiRequest } from '../utils/api'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -16,16 +17,7 @@ export default function Dashboard() {
       try {
         setLoading(true)
         setError('')
-        const res = await fetch('/api/dashboard', {
-          headers: {
-            'Content-Type': 'application/json',
-            ...(localStorage.getItem('dm-token')
-              ? { Authorization: `Bearer ${localStorage.getItem('dm-token')}` }
-              : {}),
-          },
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) throw new Error(data.message || `Request failed with ${res.status}`)
+        const data = await apiRequest('/dashboard')
         if (mounted) setDashboardData(data)
       } catch (e) {
         if (mounted) setError(e.message || 'Failed to load dashboard')
