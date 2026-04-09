@@ -1,289 +1,108 @@
-import { useEffect, useMemo, useState } from 'react'
+/**
+ * VideoTask.jsx — Video learning page.
+ *
+ * Logic lives in:
+ *   hooks/useVideoJourney.js    — playlist/video/task loading, markVideoComplete
+ *   hooks/usePlaylistModal.js   — upload/change playlist modal state + API calls
+ *
+ * UI components:
+ *   components/VideoTask/VideoPlaylistPanel.jsx — right panel (video list, progress)
+ */
+
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import Sidebar from '../components/Sidebar'
-import { apiRequest } from '../utils/api'
+import { useVideoJourney } from '../hooks/useVideoJourney'
+import { usePlaylistModal } from '../hooks/usePlaylistModal'
+import VideoPlaylistPanel from '../components/VideoTask/VideoPlaylistPanel'
 
+// ── Shared playlist URL input modal ──────────────────────────────────────
+function PlaylistModal({ title, description, language, onConfirm, onCancel, changing, changeError, newPlaylistUrl, setNewPlaylistUrl, confirmLabel }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div className="card" style={{ maxWidth: 460, width: '100%', padding: 28, borderRadius: 16, animation: 'fadeUp 0.2s ease both' }}>
+        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{title} — {language}</div>
+        <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 18, lineHeight: 1.6 }}>{description}</p>
+        <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 6 }}>YouTube Playlist URL</label>
+        <input
+          type="text" value={newPlaylistUrl} autoFocus
+          onChange={(e) => setNewPlaylistUrl(e.target.value)}
+          placeholder="https://www.youtube.com/playlist?list=..."
+          onKeyDown={(e) => { if (e.key === 'Enter') onConfirm() }}
+          style={{ width: '100%', padding: '10px 14px', borderRadius: 8, boxSizing: 'border-box', background: 'var(--bg3)', border: '1px solid var(--border2)', color: 'var(--text)', fontSize: 14, outline: 'none', marginBottom: 8 }}
+          onFocus={(e) => { e.target.style.borderColor = 'var(--accent)' }}
+          onBlur={(e)  => { e.target.style.borderColor = 'var(--border2)' }}
+        />
+        {changeError && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>{changeError}</div>}
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button className="btn-secondary" style={{ flex: 1 }} onClick={onCancel} disabled={changing}>Cancel</button>
+          <button className="btn-primary" style={{ flex: 1, opacity: changing ? 0.75 : 1 }} onClick={onConfirm} disabled={changing}>
+            {changing ? 'Loading...' : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
 export default function VideoTask() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const languageParam = params.get('language')
+
+  const languageParam   = params.get('language')
   const preferredVideoId = params.get('videoId')
-  const refreshTasksKey = params.get('refreshTasks')
+  const refreshTasksKey  = params.get('refreshTasks')
 
-  const [journeyLoading, setJourneyLoading] = useState(false)
-  const [journeyError, setJourneyError] = useState('')
-  const [playlistId, setPlaylistId] = useState(null)
-  const [language, setLanguage] = useState(null)
-  const [videos, setVideos] = useState([])
-  const [activeVideoId, setActiveVideoId] = useState(null)
+  // ── Hooks ─────────────────────────────────────────────────────────────
+  const journey = useVideoJourney({ languageParam, preferredVideoId, refreshTasksKey })
 
-  const [tasksLoading, setTasksLoading] = useState(false)
-  const [tasksError, setTasksError] = useState('')
-  const [tasks, setTasks] = useState([])
-  const [activeTaskId, setActiveTaskId] = useState(null)
-  const [videoHover, setVideoHover] = useState(false)
+  const modal = usePlaylistModal({
+    language:        journey.language,
+    applyNewPlaylist: journey.applyNewPlaylist,
+  })
 
-  // ── Change / Upload playlist modal ───────────────────────────────────────
-  const [showChangeModal, setShowChangeModal] = useState(false)
-  const [showUploadModal, setShowUploadModal] = useState(false)
-  const [newPlaylistUrl, setNewPlaylistUrl]   = useState('')
-  const [changing, setChanging]               = useState(false)
-  const [changeError, setChangeError]         = useState('')
+  const {
+    journeyLoading, journeyError,
+    playlistId, language, videos, activeVideoId, setActiveVideoId,
+    tasksLoading, tasksError,
+    activeTaskId, setActiveTaskId,
+    activeVideo, orderedTasks, completed,
+    activeTask, activeTaskUnlocked, isTaskUnlocked,
+    markVideoComplete,
+  } = journey
 
-  // Upload playlist for a language that has none yet
-  const handleUploadPlaylist = async () => {
-    if (!newPlaylistUrl.trim()) { setChangeError('Please paste a YouTube playlist URL.'); return }
-    if (!language) { setChangeError('No language selected.'); return }
-    setChanging(true)
-    setChangeError('')
-    try {
-      const res = await apiRequest('/playlists/load', {
-        method: 'POST',
-        body: JSON.stringify({ language, playlistUrl: newPlaylistUrl.trim() }),
-      })
-      setPlaylistId(res.playlistId || null)
-      setVideos(res.videos || [])
-      setTasks([])
-      setActiveTaskId(null)
-      const first = (res.videos || []).find((v) => v.unlocked) || res.videos?.[0] || null
-      setActiveVideoId(first?.id ? String(first.id) : null)
-      setShowUploadModal(false)
-      setNewPlaylistUrl('')
-    } catch (e) {
-      setChangeError(e.message || 'Failed to load playlist.')
-    } finally {
-      setChanging(false)
-    }
+  // ── Navigate to code editor for a task ───────────────────────────────
+  const openTaskInEditor = (t) => {
+    const problem = [
+      t.title,
+      t.description || '',
+      t.expectedOutput ? `Expected output:\n${t.expectedOutput}` : '',
+    ].filter(Boolean).join('\n')
+
+    localStorage.setItem('dm-code-eval-context', JSON.stringify({
+      taskId:          t.id,
+      videoId:         activeVideoId,
+      language:        language || activeVideo?.language || '',
+      problemDescription: problem,
+      starterCode:     t.starterCode || '// Write your solution here\n',
+      taskTitle:       t.title,
+      taskDescription: t.description || '',
+      difficulty:      t.difficulty || 'medium',
+      hints:           t.hints || [],
+    }))
+    navigate(
+      `/code-editor?taskId=${encodeURIComponent(String(t.id))}&videoId=${encodeURIComponent(String(activeVideoId || ''))}&language=${encodeURIComponent(language || activeVideo?.language || '')}`,
+    )
   }
 
-  const handleChangePlaylist = async () => {
-    if (!newPlaylistUrl.trim()) { setChangeError('Please paste a YouTube playlist URL.'); return }
-    if (!language) { setChangeError('No language selected.'); return }
-    setChanging(true)
-    setChangeError('')
-    try {
-      const res = await apiRequest('/playlists/change', {
-        method: 'PUT',
-        body: JSON.stringify({ language, playlistUrl: newPlaylistUrl.trim() }),
-      })
-      setPlaylistId(res.playlistId || null)
-      setVideos(res.videos || [])
-      setTasks([])
-      setActiveTaskId(null)
-      const first = (res.videos || []).find((v) => v.unlocked) || res.videos?.[0] || null
-      setActiveVideoId(first?.id ? String(first.id) : null)
-      setShowChangeModal(false)
-      setNewPlaylistUrl('')
-    } catch (e) {
-      setChangeError(e.message || 'Failed to update playlist.')
-    } finally {
-      setChanging(false)
-    }
-  }
-
-  // Shared modal for both upload and change — only the title/action differs
-  const openUpload = () => { setNewPlaylistUrl(''); setChangeError(''); setShowUploadModal(true) }
-  const openChange = () => { setNewPlaylistUrl(''); setChangeError(''); setShowChangeModal(true) }
-
-  // ── Language completion state ─────────────────────────────────────────────
-  const [languageCompleted, setLanguageCompleted] = useState(false)
-  const [nextLanguage, setNextLanguage]           = useState(null)
-  const [nextHasPlaylist, setNextHasPlaylist]     = useState(false)
-
-  // Recompute completion whenever videos change
-  useEffect(() => {
-    if (videos.length === 0) { setLanguageCompleted(false); return }
-    const allDone = videos.every((v) => v.completed)
-    setLanguageCompleted(allDone)
-  }, [videos])
-
-  const activeVideo = useMemo(
-    () => videos.find((v) => String(v.id) === String(activeVideoId)) || null,
-    [videos, activeVideoId],
-  )
-
-  useEffect(() => {
-    const load = async () => {
-      const fromStorage = (() => {
-        try {
-          const raw = localStorage.getItem('dm-onboarding')
-          const parsed = raw ? JSON.parse(raw) : null
-          return parsed?.currentLanguage || parsed?.recommendedNextLanguage || null
-        } catch {
-          return null
-        }
-      })()
-      const langRaw = languageParam || fromStorage
-      if (!langRaw) return
-      const normalize = (v) => {
-        if (v === 'Node.js') return 'Node'
-        if (v === 'Express.js') return 'Express'
-        return v
-      }
-      const lang = normalize(String(langRaw).trim())
-
-      setJourneyLoading(true)
-      setJourneyError('')
-      try {
-        const res = await apiRequest(`/videos/${encodeURIComponent(lang)}`)
-        setLanguage(lang)
-        setPlaylistId(res.playlistId || null)
-        setVideos(res.videos)
-
-        if (res.videos.length > 0) {
-          const unlocked = res.videos.filter((v) => v.unlocked && !v.completed)
-          const firstUnlocked = unlocked[0] || res.videos.find((v) => v.unlocked) || res.videos[0]
-          const pick = preferredVideoId
-            ? res.videos.find((v) => String(v.id) === String(preferredVideoId)) || firstUnlocked
-            : firstUnlocked
-          // Validate the id is a real ObjectId before storing
-          const rawId = pick?.id != null ? String(pick.id) : null
-          const validId = rawId && /^[a-f\d]{24}$/i.test(rawId) ? rawId : null
-          if (!validId && rawId) {
-            console.warn('[VideoTask] Video id from API is not a valid ObjectId:', rawId)
-          }
-          setActiveVideoId(validId)
-        } else {
-          setActiveVideoId(null)
-        }
-      } catch (e) {
-        setJourneyError(e.message)
-      } finally {
-        setJourneyLoading(false)
-      }
-    }
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [languageParam])
-
-  useEffect(() => {
-    const loadTasks = async () => {
-      if (!activeVideoId) return
-
-      // Guard: ensure activeVideoId is a valid 24-char MongoDB ObjectId hex string
-      // before sending to the backend. Prevents "Invalid video id" 400 errors.
-      const isValidObjectId = /^[a-f\d]{24}$/i.test(String(activeVideoId))
-      if (!isValidObjectId) {
-        console.warn('[VideoTask] Skipping task load — activeVideoId is not a valid ObjectId:', activeVideoId)
-        return
-      }
-
-      setTasksLoading(true)
-      setTasksError('')
-      try {
-        const res = await apiRequest(`/tasks/${activeVideoId}`)
-        setTasks(res.tasks || [])
-      } catch (e) {
-        setTasksError(e.message)
-        setTasks([])
-      } finally {
-        setTasksLoading(false)
-      }
-    }
-
-    loadTasks()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeVideoId, refreshTasksKey])
-
-  const orderedTasks = useMemo(() => {
-    return [...tasks].sort((a, b) => (a.order || 0) - (b.order || 0))
-  }, [tasks])
-
-  const completed = orderedTasks.filter((t) => t.completed).length
-  const allTasksDone = orderedTasks.length > 0 && orderedTasks.every((t) => t.completed)
-  const firstIncompleteIndex = orderedTasks.findIndex((t) => !t.completed)
-
-  const isTaskUnlocked = (idx, task) => {
-    if (!task) return false
-    if (task.completed) return true
-    if (firstIncompleteIndex === -1) return true
-    return idx === firstIncompleteIndex
-  }
-
-  const activeTask = useMemo(() => {
-    return orderedTasks.find((t) => String(t.id) === String(activeTaskId)) || null
-  }, [orderedTasks, activeTaskId])
-
-  const activeTaskIndex = useMemo(() => {
-    if (!activeTaskId) return -1
-    return orderedTasks.findIndex((t) => String(t.id) === String(activeTaskId))
-  }, [orderedTasks, activeTaskId])
-
-  const activeTaskUnlocked = activeTask ? isTaskUnlocked(activeTaskIndex, activeTask) : false
-
-  useEffect(() => {
-    // Keep the active task valid after refetch.
-    if (!activeTaskId) {
-      const next = orderedTasks.find((t) => !t.completed) || orderedTasks[0] || null
-      setActiveTaskId(next?.id ? String(next.id) : null)
-      return
-    }
-
-    const stillExists = orderedTasks.some((t) => String(t.id) === String(activeTaskId))
-    if (!stillExists) {
-      const next = orderedTasks.find((t) => !t.completed) || orderedTasks[0] || null
-      setActiveTaskId(next?.id ? String(next.id) : null)
-      return
-    }
-
-    const current = orderedTasks.find((t) => String(t.id) === String(activeTaskId))
-    if (current?.completed) {
-      const next = orderedTasks.find((t) => !t.completed) || current
-      setActiveTaskId(next?.id ? String(next.id) : null)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderedTasks])
-
-  const markVideoComplete = async () => {
-    if (!playlistId || !activeVideoId) return
-    setJourneyLoading(true)
-    setJourneyError('')
-    try {
-      const res = await apiRequest('/videos/complete', {
-        method: 'POST',
-        body: JSON.stringify({ videoId: activeVideoId }),
-      })
-
-      if (Array.isArray(res.videos)) {
-        setVideos(res.videos)
-      }
-      if (res.playlistId) {
-        setPlaylistId(res.playlistId)
-      }
-      if (res.language) {
-        setLanguage(res.language)
-      }
-
-      if (res.languageCompleted && res.nextLanguage) {
-        navigate(`/journey/playlist?language=${encodeURIComponent(res.nextLanguage)}`)
-        return
-      }
-
-      if (res.nextUnlockedVideoId) {
-        setActiveVideoId(String(res.nextUnlockedVideoId))
-      } else {
-        const nextWatch = res.videos?.find((v) => v.unlocked && !v.completed)
-        if (nextWatch) {
-          setActiveVideoId(String(nextWatch.id))
-        }
-      }
-    } catch (e) {
-      setJourneyError(e.message)
-    } finally {
-      setJourneyLoading(false)
-    }
-  }
-
+  // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="page-layout">
       <Sidebar />
       <main className="main-content" style={{ padding: 0 }}>
+
         {/* Top bar */}
-        <div style={{
-          padding: '16px 28px', borderBottom: '1px solid #e8e8e4',
-          display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-          background: '#fff', animation: 'fadeUp 0.25s ease both'
-        }}>
+        <div style={{ padding: '16px 28px', borderBottom: '1px solid #e8e8e4', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', animation: 'fadeUp 0.25s ease both' }}>
           <div>
             <span className="badge badge-cyan" style={{ marginBottom: 6 }}>
               {language || activeVideo?.language || 'Journey'} · Video tasks
@@ -293,11 +112,7 @@ export default function VideoTask() {
             </h1>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button
-              className="btn-secondary"
-              style={{ padding: '7px 14px', fontSize: 13 }}
-              onClick={openChange}
-            >
+            <button className="btn-secondary" style={{ padding: '7px 14px', fontSize: 13 }} onClick={modal.openChange}>
               🔄 Change Playlist
             </button>
             <button className="btn-primary" style={{ padding: '7px 16px', fontSize: 13 }} onClick={() => navigate('/roadmap')}>
@@ -306,131 +121,66 @@ export default function VideoTask() {
           </div>
         </div>
 
-        {/* ── Upload Playlist Modal (no existing playlist) ── */}
-        {showUploadModal && (
-          <div style={{
-            position: 'fixed', inset: 0, zIndex: 100,
-            background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
-          }}>
-            <div className="card" style={{ maxWidth: 460, width: '100%', padding: 28, borderRadius: 16, animation: 'fadeUp 0.2s ease both' }}>
-              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-                Upload Playlist — {language}
-              </div>
-              <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 18, lineHeight: 1.6 }}>
-                Paste a YouTube playlist URL to start your <strong>{language}</strong> learning journey.
-              </p>
-              <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 6 }}>YouTube Playlist URL</label>
-              <input
-                type="text" value={newPlaylistUrl}
-                onChange={(e) => setNewPlaylistUrl(e.target.value)}
-                placeholder="https://www.youtube.com/playlist?list=..."
-                style={{
-                  width: '100%', padding: '10px 14px', borderRadius: 8, boxSizing: 'border-box',
-                  background: 'var(--bg3)', border: '1px solid var(--border2)',
-                  color: 'var(--text)', fontSize: 14, outline: 'none', marginBottom: 8,
-                }}
-                onFocus={(e) => { e.target.style.borderColor = 'var(--accent)' }}
-                onBlur={(e)  => { e.target.style.borderColor = 'var(--border2)' }}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleUploadPlaylist() }}
-                autoFocus
-              />
-              {changeError && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>{changeError}</div>}
-              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowUploadModal(false)} disabled={changing}>Cancel</button>
-                <button className="btn-primary" style={{ flex: 1, opacity: changing ? 0.75 : 1 }} onClick={handleUploadPlaylist} disabled={changing}>
-                  {changing ? 'Loading...' : 'Load Playlist'}
-                </button>
-              </div>
-            </div>
-          </div>
+        {/* Modals */}
+        {modal.showUploadModal && (
+          <PlaylistModal
+            title="Upload Playlist"
+            description={`Paste a YouTube playlist URL to start your ${language} learning journey.`}
+            language={language}
+            onConfirm={modal.handleUploadPlaylist}
+            onCancel={() => modal.setShowUploadModal(false)}
+            changing={modal.changing}
+            changeError={modal.changeError}
+            newPlaylistUrl={modal.newPlaylistUrl}
+            setNewPlaylistUrl={modal.setNewPlaylistUrl}
+            confirmLabel="Load Playlist"
+          />
+        )}
+        {modal.showChangeModal && (
+          <PlaylistModal
+            title="Change Playlist"
+            description={`This will remove the current playlist and all its task progress for ${language}. Other languages are not affected.`}
+            language={language}
+            onConfirm={modal.handleChangePlaylist}
+            onCancel={() => modal.setShowChangeModal(false)}
+            changing={modal.changing}
+            changeError={modal.changeError}
+            newPlaylistUrl={modal.newPlaylistUrl}
+            setNewPlaylistUrl={modal.setNewPlaylistUrl}
+            confirmLabel="Update Playlist"
+          />
         )}
 
-        {/* ── Change Playlist Modal (existing playlist) ── */}
-        {showChangeModal && (
-          <div style={{
-            position: 'fixed', inset: 0, zIndex: 100,
-            background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
-          }}>
-            <div className="card" style={{ maxWidth: 460, width: '100%', padding: 28, borderRadius: 16, animation: 'fadeUp 0.2s ease both' }}>
-              <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-                Change Playlist — {language}
-              </div>
-              <p style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 18, lineHeight: 1.6 }}>
-                This will remove the current playlist and all its task progress for <strong>{language}</strong>.
-                Other languages are not affected.
-              </p>
-              <label style={{ fontSize: 13, fontWeight: 500, display: 'block', marginBottom: 6 }}>New YouTube Playlist URL</label>
-              <input
-                type="text" value={newPlaylistUrl}
-                onChange={(e) => setNewPlaylistUrl(e.target.value)}
-                placeholder="https://www.youtube.com/playlist?list=..."
-                style={{
-                  width: '100%', padding: '10px 14px', borderRadius: 8, boxSizing: 'border-box',
-                  background: 'var(--bg3)', border: '1px solid var(--border2)',
-                  color: 'var(--text)', fontSize: 14, outline: 'none', marginBottom: 8,
-                }}
-                onFocus={(e) => { e.target.style.borderColor = 'var(--accent)' }}
-                onBlur={(e)  => { e.target.style.borderColor = 'var(--border2)' }}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleChangePlaylist() }}
-                autoFocus
-              />
-              {changeError && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>{changeError}</div>}
-              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setShowChangeModal(false)} disabled={changing}>Cancel</button>
-                <button className="btn-primary" style={{ flex: 1, opacity: changing ? 0.75 : 1 }} onClick={handleChangePlaylist} disabled={changing}>
-                  {changing ? 'Updating...' : 'Update Playlist'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
+        {/* Error banner */}
         {journeyError && (
           <div style={{ padding: 14, background: '#fef2f2', borderBottom: '1px solid #fecaca', color: '#b91c1c' }}>
             {journeyError}
           </div>
         )}
 
-        {/* ── No playlist empty state ── */}
+        {/* No playlist empty state */}
         {!journeyLoading && !playlistId && language && (
-          <div style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-            flex: 1, padding: 40, textAlign: 'center', minHeight: 'calc(100vh - 73px)',
-          }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: 40, textAlign: 'center', minHeight: 'calc(100vh - 73px)' }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>📋</div>
-            <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
-              No playlist selected yet
-            </div>
+            <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>No playlist selected yet</div>
             <p style={{ fontSize: 14, color: 'var(--text3)', marginBottom: 24, maxWidth: 380, lineHeight: 1.6 }}>
               Upload a YouTube playlist to start your <strong>{language}</strong> learning journey.
               Tasks will be generated automatically for each video.
             </p>
-            <button
-              className="btn-primary"
-              style={{ padding: '11px 28px', fontSize: 14, fontWeight: 600 }}
-              onClick={openUpload}
-            >
+            <button className="btn-primary" style={{ padding: '11px 28px', fontSize: 14, fontWeight: 600 }} onClick={modal.openUpload}>
               📤 Upload Playlist
             </button>
           </div>
         )}
 
+        {/* Main grid */}
         <div style={{ display: playlistId ? 'grid' : 'none', gridTemplateColumns: '1fr 340px', height: 'calc(100vh - 73px)' }}>
-          {/* Left */}
+
+          {/* Left: video player + task list */}
           <div style={{ borderRight: '1px solid #e8e8e4', display: 'flex', flexDirection: 'column', background: '#fff', animation: 'fadeUp 0.3s ease both' }}>
+
             {/* Video player */}
-            <div
-              onMouseEnter={() => setVideoHover(true)}
-              onMouseLeave={() => setVideoHover(false)}
-              style={{
-                background: videoHover ? 'var(--border)' : 'var(--bg3)',
-                aspectRatio: '16/9', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', flexDirection: 'column', gap: 10,
-                cursor: 'pointer', transition: 'background 0.2s',
-                borderBottom: '1px solid #e8e8e4', position: 'relative', overflow: 'hidden'
-              }}>
+            <div style={{ aspectRatio: '16/9', background: 'var(--bg3)', borderBottom: '1px solid #e8e8e4', position: 'relative', overflow: 'hidden' }}>
               {activeVideo?.youtubeVideoId ? (
                 <iframe
                   title={activeVideo.title || 'YouTube video'}
@@ -440,11 +190,13 @@ export default function VideoTask() {
                   allowFullScreen
                 />
               ) : (
-                <div style={{ fontSize: 14, color: 'var(--text3)' }}>No video selected.</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: 14, color: 'var(--text3)' }}>
+                  No video selected.
+                </div>
               )}
             </div>
 
-            {/* Task box */}
+            {/* Task list */}
             <div style={{ flex: 1, padding: 24, display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 10 }}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Tasks for this video</div>
@@ -453,135 +205,60 @@ export default function VideoTask() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
                 {tasksLoading && orderedTasks.length === 0 && (
-                  <div className="card" style={{ padding: 12 }}>
-                    Loading tasks...
-                  </div>
+                  <div className="card" style={{ padding: 12 }}>Loading tasks...</div>
                 )}
                 {tasksError && (
                   <div style={{ padding: 12, background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', borderRadius: 10 }}>
                     {tasksError}
                   </div>
                 )}
-                {orderedTasks.map((t, idx) => (
-                  <div
-                    key={t.id}
-                    onClick={() => {
-                      if (!activeVideo?.unlocked) return
-                      if (!isTaskUnlocked(idx, t)) return
-                      // Write full task context to localStorage so CodeEditor can
-                      // restore it after a page refresh without re-fetching.
-                      const problem = [
-                        t.title,
-                        t.description || '',
-                        t.expectedOutput ? `Expected output:\n${t.expectedOutput}` : '',
-                      ].filter(Boolean).join('\n')
-                      localStorage.setItem('dm-code-eval-context', JSON.stringify({
-                        taskId: t.id,
-                        videoId: activeVideoId,
-                        language: language || activeVideo?.language || '',
-                        problemDescription: problem,
-                        starterCode: t.starterCode || '// Write your solution here\n',
-                        taskTitle: t.title,
-                        taskDescription: t.description || '',
-                        difficulty: t.difficulty || 'medium',
-                        hints: t.hints || [],
-                      }))
-                      navigate(
-                        `/code-editor?taskId=${encodeURIComponent(String(t.id))}&videoId=${encodeURIComponent(String(activeVideoId || ''))}&language=${encodeURIComponent(language || activeVideo?.language || '')}`,
-                      )
-                    }}
-                    style={{
-                      padding: '11px 13px',
-                      borderRadius: 10,
-                      cursor: activeVideo?.unlocked && isTaskUnlocked(idx, t) ? 'pointer' : 'not-allowed',
-                      background: t.completed ? '#f0fdf4' : isTaskUnlocked(idx, t) ? 'var(--card)' : 'var(--bg3)',
-                      border: `1px solid ${
-                        t.completed ? '#bbf7d0' : isTaskUnlocked(idx, t) ? 'var(--border)' : 'var(--border2)'
-                      }`,
-                      opacity: !activeVideo?.unlocked ? 0.5 : 1,
-                      pointerEvents: !activeVideo?.unlocked ? 'none' : 'auto',
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{
-                        width: 18, height: 18, borderRadius: 4,
-                        background: t.completed ? 'var(--green)' : '#fff',
-                        border: `1.5px solid ${t.completed ? 'var(--green)' : 'var(--border2)'}`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 10, color: '#fff',
-                      }}>{t.completed ? '✓' : ''}</div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{t.title}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text2)' }}>{t.description}</div>
+                {orderedTasks.map((t, idx) => {
+                  const unlocked = isTaskUnlocked(idx, t)
+                  return (
+                    <div
+                      key={t.id}
+                      onClick={() => {
+                        if (!activeVideo?.unlocked || !unlocked) return
+                        openTaskInEditor(t)
+                      }}
+                      style={{
+                        padding: '11px 13px', borderRadius: 10,
+                        cursor: activeVideo?.unlocked && unlocked ? 'pointer' : 'not-allowed',
+                        background: t.completed ? '#f0fdf4' : unlocked ? 'var(--card)' : 'var(--bg3)',
+                        border: `1px solid ${t.completed ? '#bbf7d0' : unlocked ? 'var(--border)' : 'var(--border2)'}`,
+                        opacity: !activeVideo?.unlocked ? 0.5 : 1,
+                        pointerEvents: !activeVideo?.unlocked ? 'none' : 'auto',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ width: 18, height: 18, borderRadius: 4, background: t.completed ? 'var(--green)' : '#fff', border: `1.5px solid ${t.completed ? 'var(--green)' : 'var(--border2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: '#fff' }}>
+                          {t.completed ? '✓' : ''}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{t.title}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text2)' }}>{t.description}</div>
+                        </div>
+                        {!t.completed && !unlocked && <span className="badge badge-orange" style={{ fontSize: 10, marginLeft: 'auto' }}>Locked</span>}
+                        {!t.completed && unlocked  && <span className="badge badge-cyan"   style={{ fontSize: 10, marginLeft: 'auto' }}>Unlocked</span>}
+                        <span className={`badge ${t.difficulty === 'easy' ? 'badge-green' : t.difficulty === 'hard' ? 'badge-orange' : 'badge-cyan'}`} style={{ fontSize: 11 }}>
+                          {t.difficulty}
+                        </span>
                       </div>
-                      {!t.completed && !isTaskUnlocked(idx, t) && (
-                        <span className="badge badge-orange" style={{ fontSize: 10, marginLeft: 'auto' }}>Locked</span>
-                      )}
-                      {!t.completed && isTaskUnlocked(idx, t) && (
-                        <span className="badge badge-cyan" style={{ fontSize: 10, marginLeft: 'auto' }}>Unlocked</span>
-                      )}
-                      <span className={`badge ${
-                        t.difficulty === 'easy' ? 'badge-green'
-                          : t.difficulty === 'hard' ? 'badge-orange'
-                            : 'badge-cyan'
-                      }`} style={{ fontSize: 11 }}>
-                        {t.difficulty}
-                      </span>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
 
+              {/* Action buttons */}
               <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
                 <button
                   className="btn-secondary"
                   style={{ padding: '9px 16px', fontSize: 13 }}
-                  disabled={
-                    !activeVideo?.unlocked ||
-                    !activeTask ||
-                    !activeTaskUnlocked ||
-                    activeTask.completed ||
-                    journeyLoading ||
-                    tasksLoading
-                  }
-                  title={
-                    !activeVideo?.unlocked
-                      ? 'Video is locked'
-                      : !activeTask
-                        ? 'Select an unlocked task'
-                        : !activeTaskUnlocked
-                          ? 'Complete the previous task first.'
-                          : activeTask.completed
-                            ? 'Task already completed'
-                            : ''
-                  }
+                  disabled={!activeVideo?.unlocked || !activeTask || !activeTaskUnlocked || activeTask.completed || journeyLoading || tasksLoading}
+                  title={!activeVideo?.unlocked ? 'Video is locked' : !activeTask ? 'Select an unlocked task' : !activeTaskUnlocked ? 'Complete the previous task first.' : activeTask.completed ? 'Task already completed' : ''}
                   onClick={() => {
-                    if (!activeTask || !activeVideo?.unlocked) return
-                    if (!activeTaskUnlocked) return
-                    const problem = [
-                      activeTask.title,
-                      activeTask.description || '',
-                      activeTask.expectedOutput ? `Expected output:\n${activeTask.expectedOutput}` : '',
-                    ].filter(Boolean).join('\n')
-                    localStorage.setItem(
-                      'dm-code-eval-context',
-                      JSON.stringify({
-                        taskId: activeTask.id,
-                        videoId: activeVideoId,
-                        language: language || activeVideo?.language,
-                        problemDescription: problem,
-                        starterCode: activeTask.starterCode || '// Write your solution here\n',
-                        taskTitle: activeTask.title,
-                        taskDescription: activeTask.description || '',
-                        difficulty: activeTask.difficulty || 'medium',
-                        hints: activeTask.hints || [],
-                      }),
-                    )
-                    navigate(
-                      `/code-editor?taskId=${encodeURIComponent(String(activeTask.id))}&videoId=${encodeURIComponent(
-                        String(activeVideoId || ''),
-                      )}&language=${encodeURIComponent(language || activeVideo?.language || '')}`,
-                    )
+                    if (!activeTask || !activeVideo?.unlocked || !activeTaskUnlocked) return
+                    openTaskInEditor(activeTask)
                   }}
                 >
                   Open Editor
@@ -599,99 +276,18 @@ export default function VideoTask() {
             </div>
           </div>
 
-          {/* Right: Tasks panel */}
-          <div style={{ padding: 20, overflowY: 'auto', background: 'var(--bg)', animation: 'fadeUp 0.35s ease both' }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>
-              {playlistId ? 'Playlist videos' : 'AI-Generated Tasks'}
-            </div>
-
-            {playlistId && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 18 }}>
-                {journeyLoading && videos.length === 0 && (
-                  <div className="card">Loading videos...</div>
-                )}
-                {videos.map((v) => (
-                  <div
-                    key={v.id}
-                    onClick={() => v.unlocked && setActiveVideoId(String(v.id))}
-                    style={{
-                      padding: '11px 13px',
-                      borderRadius: 8,
-                      cursor: v.unlocked ? 'pointer' : 'not-allowed',
-                      background: v.completed ? '#f0fdf4' : v.unlocked ? '#fff' : 'var(--bg3)',
-                      border: `1px solid ${v.completed ? '#bbf7d0' : v.unlocked ? 'var(--border)' : 'var(--border2)'}`,
-                      opacity: v.unlocked ? 1 : 0.55,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{
-                        width: 18, height: 18, borderRadius: 4, flexShrink: 0,
-                        background: v.completed ? 'var(--green)' : v.unlocked ? '#fff' : 'var(--border)',
-                        border: `1.5px solid ${v.completed ? 'var(--green)' : v.unlocked ? 'var(--border2)' : 'var(--border2)'}`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 10, color: '#fff',
-                      }}>{v.completed ? '✓' : ''}</div>
-                      <span style={{
-                        fontSize: 13,
-                        fontWeight: 500,
-                        color: v.completed ? 'var(--text3)' : 'var(--text)',
-                        textDecoration: v.completed ? 'line-through' : 'none',
-                      }}>
-                        {v.order + 1}. {v.title}
-                      </span>
-                      {!v.unlocked && !v.completed && (
-                        <span className="badge badge-orange" style={{ fontSize: 10, marginLeft: 'auto' }}>Locked</span>
-                      )}
-                      {v.unlocked && !v.completed && (
-                        <span className="badge badge-cyan" style={{ fontSize: 10, marginLeft: 'auto' }}>Unlocked</span>
-                      )}
-                      {v.completed && (
-                        <span className="badge badge-green" style={{ fontSize: 10, marginLeft: 'auto' }}>Done</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!journeyLoading && videos.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                <div style={{ fontSize: 28, marginBottom: 10 }}>📋</div>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>No playlist yet</div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14 }}>
-                  Upload a playlist to start learning {language}.
-                </div>
-                <button className="btn-primary" style={{ fontSize: 12, padding: '7px 16px' }} onClick={openUpload}>
-                  Upload Playlist
-                </button>
-              </div>
-            )}
-
-            {/* Tasks list moved to left panel */}
-
-            {/* Hint */}
-            <div style={{ padding: 14, borderRadius: 8, background: '#eff6ff', border: '1px solid #bfdbfe', marginBottom: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent)', marginBottom: 6 }}>Hint</div>
-              <p style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.6 }}>
-                Props flow one-way from parent to child. Pass values like{' '}
-                <code style={{ background: '#dbeafe', padding: '1px 5px', borderRadius: 4, fontSize: 12 }}>{'<Child name={value} />'}</code>
-              </p>
-            </div>
-
-            {/* Progress */}
-            <div style={{ padding: 14, borderRadius: 8, background: '#fff', border: '1px solid #e8e8e4' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 500 }}>Progress</span>
-                <span style={{ fontSize: 13, color: 'var(--text3)' }}>{completed}/{orderedTasks.length}</span>
-              </div>
-              <div className="progress-bar">
-                <div
-                  className="progress-fill"
-                  style={{ width: `${orderedTasks.length ? (completed / orderedTasks.length) * 100 : 0}%` }}
-                />
-              </div>
-            </div>
-          </div>
+          {/* Right: playlist panel */}
+          <VideoPlaylistPanel
+            playlistId={playlistId}
+            videos={videos}
+            activeVideoId={activeVideoId}
+            setActiveVideoId={setActiveVideoId}
+            journeyLoading={journeyLoading}
+            language={language}
+            orderedTasks={orderedTasks}
+            completed={completed}
+            openUpload={modal.openUpload}
+          />
         </div>
       </main>
     </div>

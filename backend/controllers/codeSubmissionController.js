@@ -120,9 +120,9 @@ async function submitCodeLegacy(req, res, next) {
 /** POST /api/code/draft — upsert a draft for (userId, taskId). */
 async function saveDraft(req, res, next) {
   try {
-    const { taskId, code, videoId } = req.body;
-    if (!taskId || typeof code !== 'string') {
-      next(new HttpError(400, 'taskId and code are required'));
+    const { taskId, code, videoId, files } = req.body;
+    if (!taskId) {
+      next(new HttpError(400, 'taskId is required'));
       return;
     }
     if (!mongoose.Types.ObjectId.isValid(taskId)) {
@@ -130,7 +130,16 @@ async function saveDraft(req, res, next) {
       return;
     }
 
-    // Ownership check — user must own the task's playlist
+    // Build the code string to store:
+    // If files object provided, combine all files into one string for storage.
+    // The draft endpoint stores a single string for backward compat.
+    let codeToStore = typeof code === 'string' ? code : '';
+    if (files && typeof files === 'object' && Object.keys(files).length > 0) {
+      // Store the primary file (first file) as the draft code.
+      // The full files object is stored in executionResult for future retrieval.
+      codeToStore = Object.values(files)[0] || codeToStore;
+    }
+
     const task = await userOwnsTask(req.userId, taskId);
     if (!task) {
       next(new HttpError(404, 'Task not found'));
@@ -141,13 +150,14 @@ async function saveDraft(req, res, next) {
       { userId: req.userId, taskId: task._id, isDraft: true },
       {
         $set: {
-          userId: req.userId,
-          taskId: task._id,
-          code,
-          isDraft: true,
-          status: 'pending',
+          userId:    req.userId,
+          taskId:    task._id,
+          code:      codeToStore,
+          isDraft:   true,
+          status:    'pending',
           submittedAt: new Date(),
-          ...(videoId && mongoose.Types.ObjectId.isValid(videoId) ? {} : {}),
+          // Store full files object in executionResult.output as JSON
+          ...(files ? { 'executionResult.output': JSON.stringify(files) } : {}),
         },
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
@@ -164,16 +174,33 @@ async function getDraft(req, res, next) {
   try {
     const { taskId } = req.params;
     if (!mongoose.Types.ObjectId.isValid(taskId)) {
-      res.json({ success: true, code: '' });
+      res.json({ success: true, code: '', files: null });
       return;
     }
 
     const draft = await CodeSubmission.findOne(
       { userId: req.userId, taskId, isDraft: true },
-      { code: 1 },
+      { code: 1, 'executionResult.output': 1 },
     ).sort({ submittedAt: -1 }).lean();
 
-    res.json({ success: true, code: draft?.code || '' });
+    if (!draft) {
+      res.json({ success: true, code: '', files: null });
+      return;
+    }
+
+    // Try to parse files from executionResult.output (stored as JSON string)
+    let files = null;
+    const rawOutput = draft?.executionResult?.output;
+    if (rawOutput && typeof rawOutput === 'string') {
+      try {
+        const parsed = JSON.parse(rawOutput);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          files = parsed;
+        }
+      } catch { /* not a files JSON — ignore */ }
+    }
+
+    res.json({ success: true, code: draft.code || '', files });
   } catch (e) {
     next(e);
   }

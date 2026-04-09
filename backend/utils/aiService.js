@@ -203,7 +203,7 @@ async function refineOptimizedCode(apiKey, model, candidate, title, description)
 }
 
 // ── Main export ───────────────────────────────────────────────────────────
-async function evaluateCode(code, problemDescription, { taskTitle = '', taskDescription = '' } = {}) {
+async function evaluateCode(code, problemDescription, { taskTitle = '', taskDescription = '', files = null } = {}) {
   const apiKey = process.env.OPENROUTER_API_KEY
 
   console.log('[AI] OPENROUTER_API_KEY present:', !!apiKey, '| length:', apiKey?.length ?? 0)
@@ -224,8 +224,57 @@ async function evaluateCode(code, problemDescription, { taskTitle = '', taskDesc
   const model       = (process.env.OPENROUTER_MODEL || 'deepseek/deepseek-chat').trim()
   const FALLBACK    = 'openai/gpt-4o-mini'
 
-  // ── Evaluation prompt ─────────────────────────────────────────────────
-  const evalPrompt = [
+  // ── Build prompt — multi-file or single-file ──────────────────────────
+  const isMultiFile = files && typeof files === 'object' && Object.keys(files).length > 1
+
+  const codeSection = isMultiFile
+    ? Object.entries(files)
+        .map(([filename, content]) => `FILE: ${filename}\n\`\`\`\n${content || ''}\n\`\`\``)
+        .join('\n\n')
+    : userCode || '(empty)'
+
+  const evalPrompt = isMultiFile ? [
+    'You are a strict code evaluator and optimizer.',
+    'You MUST return ONLY valid JSON.',
+    'Do NOT include: explanations, markdown, text before JSON, text after JSON.',
+    '',
+    `Task Title: ${title || '(not provided)'}`,
+    `Task Description: ${description || '(not provided)'}`,
+    '',
+    'Evaluate this multi-file project:',
+    '',
+    codeSection,
+    '',
+    'Check:',
+    '  1. Code correctness across all files',
+    '  2. Required features implemented',
+    '  3. File structure validity (correct imports, references between files)',
+    '  4. Project completeness',
+    '',
+    'Step 1 — Score (0-100):',
+    '  90-100 = correct, complete, clean',
+    '  70-89  = mostly correct, minor issues',
+    '  50-69  = partially correct, logic errors',
+    '  0-49   = incorrect or incomplete',
+    '',
+    'Step 2 — If correctnessScore >= 70:',
+    '  Generate optimizedCode for the PRIMARY file (the main logic file).',
+    '  It must be production-quality.',
+    '',
+    'Step 2 — If correctnessScore < 70:',
+    '  Set optimizedCode to null.',
+    '',
+    'Return exactly this JSON and nothing else:',
+    '{',
+    '  "correctnessScore": <integer 0-100>,',
+    '  "feedback": "<one paragraph evaluation summary>",',
+    '  "errors": ["<error1>"],',
+    '  "suggestions": ["<suggestion1>"],',
+    '  "optimizedCode": "<improved primary file code if score >= 70, otherwise null>"',
+    '}',
+    '',
+    'CRITICAL: Start with { and end with }. Nothing outside the JSON.',
+  ].join('\n') : [
     'You are a strict code evaluator and optimizer.',
     'You MUST return ONLY valid JSON.',
     'Do NOT include: explanations, markdown, text before JSON, text after JSON.',
@@ -235,7 +284,7 @@ async function evaluateCode(code, problemDescription, { taskTitle = '', taskDesc
     `Task Description: ${description || '(not provided)'}`,
     '',
     'Student Code:',
-    userCode || '(empty)',
+    codeSection,
     '',
     'Step 1 — Evaluate and score (0-100):',
     '  90-100 = correct and clean',

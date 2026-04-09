@@ -9,10 +9,12 @@ const Playlist = require('../models/Playlist')
 // ── Request validators ────────────────────────────────────────────────────
 function aiEvaluateValidators() {
   return [
-    body('code').isString().trim().notEmpty().withMessage('code is required'),
+    // Accept either a single code string OR a files object — both are valid
+    body('code').optional().isString().trim(),
+    body('files').optional().isObject(),
     body('taskTitle').optional().isString().trim(),
     body('taskDescription').optional().isString().trim(),
-    body('problemDescription').optional().isString().trim(), // legacy compat
+    body('problemDescription').optional().isString().trim(),
     body('taskId').optional().isString().trim(),
     body('videoId').optional().isString().trim(),
   ]
@@ -80,7 +82,8 @@ async function resolveTaskOwnership(userId, taskId) {
 async function evaluateCodeController(req, res, next) {
   try {
     const {
-      code,
+      code:              rawCode,
+      files:             rawFiles,
       taskTitle          = '',
       taskDescription    = '',
       problemDescription = '',
@@ -90,18 +93,42 @@ async function evaluateCodeController(req, res, next) {
 
     const description = taskDescription || problemDescription
 
-    console.log('[AI] /evaluate called | taskId:', taskId, '| user:', req.userId)
+    // ── Build combined code from files object or fall back to single code ─
+    // files = { "index.html": "...", "style.css": "...", "script.js": "..." }
+    const isMultiFile = rawFiles && typeof rawFiles === 'object' && Object.keys(rawFiles).length > 0
 
-    // ── Plain-text guard — skip AI call entirely ──────────────────────────
-    if (!isLikelyCode(code)) {
-      console.warn('[AI] Rejected plain-text | user:', req.userId, '| preview:', code.slice(0, 80))
+    let combinedCode
+    if (isMultiFile) {
+      combinedCode = Object.entries(rawFiles)
+        .map(([filename, content]) => `// FILE: ${filename}\n${content || ''}`)
+        .join('\n\n')
+    } else {
+      combinedCode = typeof rawCode === 'string' ? rawCode : ''
+    }
+
+    // The primary code for single-file operations (save, submit) is always
+    // the active file's content — use rawCode if provided, else first file.
+    const primaryCode = typeof rawCode === 'string' && rawCode.trim()
+      ? rawCode
+      : (isMultiFile ? Object.values(rawFiles)[0] || '' : '')
+
+    console.log('[AI] /evaluate called | taskId:', taskId, '| user:', req.userId,
+      '| multiFile:', isMultiFile, '| files:', isMultiFile ? Object.keys(rawFiles).join(', ') : 'n/a')
+
+    // ── Plain-text guard ──────────────────────────────────────────────────
+    if (!isLikelyCode(combinedCode)) {
+      console.warn('[AI] Rejected plain-text | user:', req.userId, '| preview:', combinedCode.slice(0, 80))
       return res.json(PLAIN_TEXT_REJECTION)
     }
 
     // ── Call OpenRouter ───────────────────────────────────────────────────
     let result
     try {
-      result = await evaluateCode(code, description, { taskTitle, taskDescription: description })
+      result = await evaluateCode(combinedCode, description, {
+        taskTitle,
+        taskDescription: description,
+        files: isMultiFile ? rawFiles : null,
+      })
     } catch (aiErr) {
       console.error('[AI] evaluateCode threw:', aiErr.message)
       return res.status(200).json({
@@ -125,7 +152,7 @@ async function evaluateCodeController(req, res, next) {
         await CodeSubmission.create({
           userId: req.userId,
           taskId: task._id,
-          code,
+          code:   primaryCode,
           status: passed ? 'passed' : 'failed',
           executionResult: {
             output:        result.feedback,
@@ -141,7 +168,7 @@ async function evaluateCodeController(req, res, next) {
       }
     }
 
-    // ── Final validation — guarantee all fields present ───────────────────
+    // ── Final validation ──────────────────────────────────────────────────
     const safeScore       = typeof result.score    === 'number' ? result.score    : 50
     const safeFeedback    = typeof result.feedback === 'string' ? result.feedback : 'Evaluation complete.'
     const safeErrors      = Array.isArray(result.errors)        ? result.errors      : []

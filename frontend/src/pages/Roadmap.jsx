@@ -48,6 +48,7 @@ export default function Roadmap() {
       // Keep the auth token so the user stays logged in
       localStorage.removeItem('dm-onboarding')
       localStorage.removeItem('dm-user')
+      localStorage.removeItem('dm-current-language')
       localStorage.removeItem('dm-code-eval-context')
       // Clear any draft keys
       Object.keys(localStorage)
